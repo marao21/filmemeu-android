@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Banner da tela inicial da TV: 320x180, como o Android pede. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+  <path
+      android:pathData="M0,0h320v180h-320z"
+      android:fillColor="#0F172A" />
+  <path
+      android:pathData="M28,56h88a8,8 0 0 1 8,8v52a8,8 0 0 1 -8,8h-88a8,8 0 0 1 -8,-8v-52a8,8 0 0 1 8,-8z"
+      android:fillColor="#1E293B" />
+  <path
+      android:pathData="M60,74l30,16l-30,16z"
+      android:fillColor="#F43F5E" />
+  <path
+      android:pathData="M148,78h132v10h-132z"
+      android:fillColor="#E2E8F0" />
+  <path
+      android:pathData="M148,98h88v8h-88z"
+      android:fillColor="#64748B" />
+</vector>
