@@ -193,15 +193,30 @@ object Fontes {
   }
 
   /**
-   * O servidor de video atende neste endereco?
+   * Este endereco entrega mesmo um video?
    *
-   * Pedimos so os dois primeiros bytes, com `Range`: o que interessa e o
-   * codigo da resposta, nao o conteudo. GET e nao HEAD de proposito, porque
-   * ha servidor de video que recusa HEAD com 405 e nos faria descartar um
-   * endereco bom.
+   * Conferimos o CONTEUDO, e nao so o codigo da resposta - e essa
+   * diferenca e a que faz o filme tocar.
    *
-   * Qualquer tropeco conta como fechado - para quem vai assistir, da no
-   * mesmo.
+   * A primeira versao pedia dois bytes com `Range` e aceitava qualquer
+   * resposta bem-sucedida. Dois problemas apareceram no aparelho:
+   *
+   * Servidor de video assinado costuma recusar pedido parcial, entao a
+   * conferida reprovava endereco bom. Reprovando os dois, a reserva ficava
+   * sendo o primeiro da fila - e o primeiro e o que estava fechado.
+   *
+   * E um 403 tambem "responde": vem com uma pagina de erro no corpo. Pelo
+   * codigo da resposta da para enganar; pelo conteudo, nao. O player
+   * recebia essa pagina e dizia o obvio:
+   *
+   *   ParserException: Input does not start with the #EXTM3U header
+   *
+   * Agora lemos o comeco do arquivo. Playlist de verdade abre com
+   * `#EXTM3U`; qualquer outra coisa, por mais que o servidor diga 200,
+   * nao e video.
+   *
+   * Para `.mp4` o teste e outro: ali basta a resposta vir bem, porque o
+   * conteudo e binario e nao tem marca de texto para conferir.
    */
   private suspend fun abre(url: String, referer: String): Boolean =
     withContext(Dispatchers.IO) {
@@ -210,10 +225,19 @@ object Fontes {
           .url(url)
           .header("user-agent", Http.UA)
           .header("referer", referer)
-          .header("range", "bytes=0-1")
           .build()
         Http.cliente.newCall(pedido).execute().use { r ->
-          r.isSuccessful || r.code == 206
+          if (!r.isSuccessful) return@use false
+
+          val playlist = url.substringBefore("?").lowercase().let {
+            it.endsWith(".m3u8") || it.endsWith("master.txt") || it.contains("/hls/")
+          }
+          if (!playlist) return@use true
+
+          // So o comeco interessa. peekBody le ate esse tanto sem consumir
+          // o corpo e sem quebrar quando o arquivo e menor que o pedido.
+          val inicio = r.peekBody(64).string()
+          inicio.trimStart().startsWith("#EXTM3U")
         }
       } catch (e: Exception) {
         false
