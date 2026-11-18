@@ -31,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Marca
 import com.filmemeu.app.data.Tipo
@@ -60,6 +62,7 @@ import com.filmemeu.app.ui.Rodinha
 import com.filmemeu.app.ui.Vao
 import com.filmemeu.app.ui.VaoH
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * O nosso player.
@@ -157,6 +160,11 @@ private fun Palco(
   var mudo by remember { mutableStateOf(false) }
   var volume by remember { mutableStateOf(1f) }
   var qualidade by remember { mutableStateOf("") }
+
+  // Procurar o proximo episodio conversa com a origem e leva segundos.
+  // Sem este aviso, o botao pareceria morto no primeiro toque.
+  var procurandoProximo by remember { mutableStateOf(false) }
+  val escopo = rememberCoroutineScope()
   var carregando by remember { mutableStateOf(true) }
   var falha by remember { mutableStateOf<String?>(null) }
   var quieto by remember { mutableStateOf(false) }
@@ -364,6 +372,62 @@ private fun Palco(
             Text("T" + temporada + " E" + episodio, color = Cor.muted, fontSize = 12.sp)
           }
         }
+        /*
+         * Pular para o proximo episodio.
+         *
+         * So em serie, e so aqui em cima, junto do nome - e o lugar onde a
+         * pessoa ja olha para saber em que episodio esta.
+         *
+         * O proximo episodio e outro video: o endereco dele ainda nao
+         * existe, e precisa ser procurado como o primeiro foi. Por isso a
+         * tela abre de novo em vez de so trocar a fonte - assim o player
+         * nasce ja com a posicao guardada daquele episodio, se houver, e o
+         * Voltar leva de volta para a pagina do titulo, e nao para o
+         * episodio anterior.
+         */
+        if (tipo.ehSerie) {
+          com.filmemeu.app.ui.Botao(
+            if (procurandoProximo) "Procurando…" else "Próximo ▸",
+            pequeno = true
+          ) {
+            if (!procurandoProximo) {
+              procurandoProximo = true
+              escopo.launch {
+                val proximo = episodio + 1
+                val achada = try {
+                  Fontes.procurar(tipo, id, temporada, proximo)
+                } catch (e: Exception) {
+                  null
+                }
+                procurandoProximo = false
+                if (achada == null) {
+                  android.widget.Toast.makeText(
+                    ctx,
+                    "Nao achei o episodio " + proximo + ".",
+                    android.widget.Toast.LENGTH_SHORT
+                  ).show()
+                } else {
+                  Guardados.guardarFonte(ctx, achada)
+                  PlayerActivity.abrir(
+                    ctx = ctx,
+                    url = achada.url,
+                    referer = achada.referer,
+                    titulo = titulo,
+                    cartaz = cartaz,
+                    tipo = tipo,
+                    id = id,
+                    temporada = temporada,
+                    episodio = proximo,
+                    posicao = Guardados.posicaoDe(ctx, tipo, id, temporada, proximo)
+                  )
+                  aoSair()
+                }
+              }
+            }
+          }
+          VaoH(8)
+        }
+
         com.filmemeu.app.ui.Botao("Baixar", pequeno = true) {
           DownloadService.baixar(ctx, url, referer, titulo)
         }
