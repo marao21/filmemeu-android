@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -189,11 +190,42 @@ private fun Palco(
       http.setDefaultRequestProperties(mapOf("Referer" to referer))
     }
 
+    /*
+     * Dizer ao player que aquilo e uma playlist, quando o nome nao diz.
+     *
+     * O ExoPlayer adivinha o formato pela extensao do endereco. Isso
+     * funciona para `.m3u8` e para `.mp4`, e falha calado para o VIP
+     * Player, que entrega a playlist num arquivo chamado `master.txt`.
+     * Por dentro e um `#EXTM3U` como qualquer outro; por fora parece
+     * arquivo de texto.
+     *
+     * O resultado, medido aqui no aparelho:
+     *
+     *   UnrecognizedInputFormatException: None of the available extractors
+     *
+     * Ou seja: o video baixou, a fonte liberou, nao houve 403 nenhum - o
+     * player so nao soube ler o que recebeu. Dizendo o tipo na mao,
+     * ele usa o leitor de HLS e toca.
+     *
+     * O site ja tinha aprendido isto, e esta escrito no api/fonte.js. O
+     * aplicativo nao sabia, e levou o mesmo tombo.
+     */
+    fun itemDe(endereco: String): MediaItem {
+      val limpo = endereco.substringBefore("?").lowercase()
+      val ehPlaylist = limpo.endsWith(".m3u8") ||
+        limpo.endsWith("master.txt") ||
+        limpo.contains("/hls/")
+
+      val b = MediaItem.Builder().setUri(endereco)
+      if (ehPlaylist) b.setMimeType(MimeTypes.APPLICATION_M3U8)
+      return b.build()
+    }
+
     ExoPlayer.Builder(ctx)
       .setMediaSourceFactory(DefaultMediaSourceFactory(http))
       .build()
       .apply {
-        setMediaItem(MediaItem.fromUri(url))
+        setMediaItem(itemDe(url))
         if (posicao > 0) seekTo(posicao)
         playWhenReady = true
         prepare()
