@@ -29,6 +29,11 @@ import org.json.JSONObject
  * O terceiro, o Premium, fica de fora: ele exige um navegador de verdade
  * para passar por um desafio de robo, e isso nao e caminho que a gente
  * percorre.
+ *
+ * Credito: o jeito de conversar com a playerflix - a rota de listagem e o
+ * formato dos dois extratores - foi aprendido do projeto embed-movies, de
+ * Jonas Caetano (github.com/JonasCaetanoSz/embed-movies), sob licenca MIT.
+ * O codigo aqui e nosso e em Kotlin; a descoberta do caminho e dele.
  */
 object Fontes {
 
