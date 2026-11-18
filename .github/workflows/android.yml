@@ -1,0 +1,59 @@
+name: APK de debug
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Gerar APK de debug
+    runs-on: ubuntu-latest
+    permissions:
+      # Para o GITHUB_TOKEN poder criar e atualizar a release.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      # Este projeto tem o gradlew e o gradle-wrapper.jar versionados, entao
+      # nao precisa instalar o Gradle a parte: o wrapper baixa a versao certa.
+      - name: Liberar o gradlew
+        run: chmod +x ./gradlew
+
+      - name: Compilar APK de debug
+        run: ./gradlew assembleDebug --console=plain --stacktrace
+
+      - name: Renomear APK
+        run: cp app/build/outputs/apk/debug/*.apk FilmeMeu.apk
+
+      - name: Publicar APK como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: FilmeMeu-apk
+          path: FilmeMeu.apk
+          retention-days: 30
+
+      # A release rolante da um endereco de download fixo, que o artefato nao
+      # tem. So em push: um pull request de fora nao deve publicar release.
+      - name: Publicar APK na release apk-latest
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="APK de debug do commit ${GITHUB_SHA:0:7}, gerado em $(date -u '+%d/%m/%Y %H:%M UTC')."
+          gh release create apk-latest \
+            --target "$GITHUB_SHA" \
+            --title "APK de debug (ultimo build)" \
+            --notes "$notes" \
+            --prerelease \
+            || gh release edit apk-latest --notes "$notes"
+          gh release upload apk-latest FilmeMeu.apk --clobber

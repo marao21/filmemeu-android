@@ -21,6 +21,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,11 +35,13 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.filmemeu.app.data.Conta
 import com.filmemeu.app.data.Fonte
+import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Item
 import com.filmemeu.app.data.Temporada
 import com.filmemeu.app.data.Tipo
 import com.filmemeu.app.data.Tmdb
+import kotlinx.coroutines.launch
 
 /**
  * A pagina do titulo: e o que o toque no cartaz abre.
@@ -67,6 +70,13 @@ fun TelaDetalhe(
   var urlDigitada by remember { mutableStateOf("") }
   var refererDigitado by remember { mutableStateOf("") }
 
+  // A busca da fonte acontece fora da tela: ela conversa com a origem e com
+  // o servidor de video, e isso leva segundos. Sem este aviso, o Assistir
+  // pareceria um botao morto.
+  var procurandoFonte by remember { mutableStateOf(false) }
+  var recadoDaBusca by remember { mutableStateOf("") }
+  val escopo = rememberCoroutineScope()
+
   LaunchedEffect(item.id) {
     if (item.tipo.ehSerie) {
       temporadas = try {
@@ -85,13 +95,49 @@ fun TelaDetalhe(
   val guardada = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
   val onde = Guardados.posicaoDe(ctx, item.tipo, item.id, temporada, episodio)
 
+  /**
+   * Assistir: o aplicativo procura a fonte sozinho.
+   *
+   * Antes, nao havendo fonte guardada, a unica saida era pedir o endereco a
+   * quem ia assistir - e ninguem tem um `.m3u8` na mao. Agora o aplicativo
+   * pergunta a origem, como o site fazia, so que sem servidor nosso no
+   * meio: o aparelho fala direto, e por isso o video nao entra na conta da
+   * hospedagem.
+   *
+   * A fonte achada fica guardada para a proxima vez. E ela vence: o
+   * endereco vem assinado e dura poucos minutos, entao o que estiver velho
+   * sera recusado e a busca refeita.
+   *
+   * Nao achando nada, o caminho manual continua existindo - e a ultima
+   * carta, nao a primeira.
+   */
   fun assistir(doComeco: Boolean) {
-    val fonte = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
-    if (fonte == null) {
-      pedindoFonte = true
+    val guardadaAgora = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
+    if (guardadaAgora != null) {
+      aoAssistir(guardadaAgora, if (doComeco) 0L else onde)
       return
     }
-    aoAssistir(fonte, if (doComeco) 0L else onde)
+
+    if (procurandoFonte) return
+    procurandoFonte = true
+    recadoDaBusca = ""
+
+    escopo.launch {
+      val achada = try {
+        Fontes.procurar(item.tipo, item.id, temporada, episodio)
+      } catch (e: Exception) {
+        null
+      }
+      procurandoFonte = false
+
+      if (achada != null) {
+        Guardados.guardarFonte(ctx, achada)
+        aoAssistir(achada, if (doComeco) 0L else onde)
+      } else {
+        recadoDaBusca = "Nenhum servidor abriu este título agora."
+        pedindoFonte = true
+      }
+    }
   }
 
   Column(
@@ -175,7 +221,14 @@ fun TelaDetalhe(
           verticalAlignment = Alignment.CenterVertically
         ) {
           Botao(
-            if (onde > 0) "Continuar assistindo" else "Assistir",
+            when {
+              // Procurar a fonte conversa com a origem e com o servidor de
+              // video, e isso leva segundos. Dizer que esta procurando e o
+              // que separa "esperando" de "quebrado".
+              procurandoFonte -> "Procurando o filme…"
+              onde > 0 -> "Continuar assistindo"
+              else -> "Assistir"
+            },
             jeito = Jeito.PRIMARIO
           ) { assistir(false) }
 
@@ -228,6 +281,14 @@ fun TelaDetalhe(
       ) {
         Text("Fonte do video", color = Cor.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Vao(6)
+
+        // Quando a busca automatica falhou, o motivo vem antes da
+        // explicacao: a pessoa precisa saber que o aplicativo tentou.
+        if (recadoDaBusca.isNotBlank()) {
+          Text(recadoDaBusca, color = Cor.danger, fontSize = 13.sp)
+          Vao(6)
+        }
+
         Text(
           "Informe o endereco do arquivo .mp4 ou .m3u8 que voce tem direito de assistir. " +
             "Ele fica guardado neste aparelho, so para este titulo.",
