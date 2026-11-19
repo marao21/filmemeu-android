@@ -47,12 +47,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.annotation.OptIn
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
@@ -65,6 +69,7 @@ import com.filmemeu.app.ui.Vao
 import com.filmemeu.app.ui.VaoH
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -182,15 +187,38 @@ private fun Palco(
   var ultimoToque by remember { mutableStateOf(System.currentTimeMillis()) }
 
   /**
-   * ExoPlayer apoiado no mesmo OkHttpClient que valida as fontes, enviando
-   * User-Agent, Referer, Origin e Accept consistentes para playlist e segmentos.
+   * ExoPlayer apoiado no mesmo OkHttpClient que valida as fontes, com
+   * AudioSink tolerante a pequenos saltos de timestamp (>200ms) comuns em
+   * segmentos HLS/MPEG-TS sem #EXT-X-DISCONTINUITY.
    */
   val player = remember {
     val fabricaHttp = OkHttpDataSource.Factory(Http.cliente) {
       Http.cabecalhosVideo(refererRef.get())
     }
-    ExoPlayer.Builder(ctx)
+    val renderers = object : DefaultRenderersFactory(ctx) {
+      override fun buildAudioSink(
+        context: Context,
+        enableFloatOutput: Boolean,
+        enableAudioTrackPlaybackParams: Boolean
+      ): AudioSink? {
+        val base = super.buildAudioSink(
+          context,
+          enableFloatOutput,
+          enableAudioTrackPlaybackParams
+        ) ?: return null
+        return TolerantAudioSink(base)
+      }
+    }.setEnableDecoderFallback(true)
+
+    val audioAttrs = AudioAttributes.Builder()
+      .setUsage(C.USAGE_MEDIA)
+      .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+      .build()
+
+    ExoPlayer.Builder(ctx, renderers)
       .setMediaSourceFactory(DefaultMediaSourceFactory(fabricaHttp))
+      .setAudioAttributes(audioAttrs, /* handleAudioFocus = */ true)
+      .setHandleAudioBecomingNoisy(true)
       .build()
   }
 
@@ -269,6 +297,9 @@ private fun Palco(
       }
 
       override fun onPlayerError(erro: PlaybackException) {
+        if (player.currentPosition > 0) {
+          onde = player.currentPosition
+        }
         if (!tentouRenovar && id > 0) {
           tentouRenovar = true
           carregando = true
@@ -666,5 +697,29 @@ private fun tempo(ms: Long): String {
     String.format("%02d:%02d:%02d", h, m, seg)
   } else {
     String.format("%02d:%02d", m, seg)
+  }
+}
+
+/**
+ * Envolve o AudioSink padrao para ressincronizar automaticamente quando um
+ * stream HLS/MPEG-TS apresenta um salto de PTS de audio acima de 200ms entre
+ * segmentos sem a tag `#EXT-X-DISCONTINUITY`.
+ */
+@OptIn(UnstableApi::class)
+private class TolerantAudioSink(
+  private val delegate: AudioSink
+) : AudioSink by delegate {
+
+  override fun handleBuffer(
+    buffer: ByteBuffer,
+    presentationTimeUs: Long,
+    encodedAccessUnitCount: Int
+  ): Boolean {
+    return try {
+      delegate.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+    } catch (_: AudioSink.UnexpectedDiscontinuityException) {
+      delegate.handleDiscontinuity()
+      delegate.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+    }
   }
 }

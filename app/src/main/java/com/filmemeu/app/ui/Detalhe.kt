@@ -1,11 +1,9 @@
 package com.filmemeu.app.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -66,10 +64,6 @@ fun TelaDetalhe(
   var parecidos by remember { mutableStateOf<List<Item>>(emptyList()) }
   var naMinha by remember { mutableStateOf(Guardados.estaNaMinha(ctx, item.tipo, item.id)) }
 
-  var pedindoFonte by remember { mutableStateOf(false) }
-  var urlDigitada by remember { mutableStateOf("") }
-  var refererDigitado by remember { mutableStateOf("") }
-
   // A busca da fonte acontece fora da tela: ela conversa com a origem e com
   // o servidor de video, e isso leva segundos. Sem este aviso, o Assistir
   // pareceria um botao morto.
@@ -92,7 +86,6 @@ fun TelaDetalhe(
     }
   }
 
-  val guardada = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
   val onde = Guardados.posicaoDe(ctx, item.tipo, item.id, temporada, episodio)
 
   /**
@@ -143,7 +136,6 @@ fun TelaDetalhe(
         aoAssistir(achada, if (doComeco) 0L else onde)
       } else {
         recadoDaBusca = "Nenhum servidor abriu este título agora."
-        pedindoFonte = true
       }
     }
   }
@@ -250,97 +242,11 @@ fun TelaDetalhe(
           Botao(if (naMinha) "Na minha lista" else "+ Minha lista", pequeno = true) {
             naMinha = Guardados.virarNaMinha(ctx, item)
           }
-
-          if (guardada != null) {
-            Botao("Trocar a fonte", jeito = Jeito.FANTASMA, pequeno = true) {
-              urlDigitada = guardada.url
-              refererDigitado = guardada.referer ?: ""
-              pedindoFonte = true
-            }
-          }
         }
 
-        if (guardada == null) {
-          Vao(8)
-          Text(
-            "Este titulo ainda nao tem fonte de video neste aparelho.",
-            color = Cor.muted, fontSize = 12.sp
-          )
-        }
-      }
-    }
-
-    /*
-     * De onde vem o video.
-     *
-     * O site pedia o endereco a uma funcao que varria sites de terceiros.
-     * Aqui quem informa e quem assiste: o endereco do arquivo que a pessoa
-     * tem direito de ver. Fica guardado por titulo, temporada e episodio,
-     * para nao ser pedido de novo.
-     */
-    if (pedindoFonte) {
-      Column(
-        Modifier
-          .padding(16.dp)
-          .fillMaxWidth()
-          .border(1.dp, Cor.lineSoft, raio)
-          .background(Cor.panel, raio)
-          .padding(18.dp)
-      ) {
-        Text("Fonte do video", color = Cor.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Vao(6)
-
-        // Quando a busca automatica falhou, o motivo vem antes da
-        // explicacao: a pessoa precisa saber que o aplicativo tentou.
         if (recadoDaBusca.isNotBlank()) {
+          Vao(10)
           Text(recadoDaBusca, color = Cor.danger, fontSize = 13.sp)
-          Vao(6)
-        }
-
-        Text(
-          "Informe o endereco do arquivo .mp4 ou .m3u8 que voce tem direito de assistir. " +
-            "Ele fica guardado neste aparelho, so para este titulo.",
-          color = Cor.muted, fontSize = 12.5.sp
-        )
-        Vao(14)
-
-        Campo(
-          "Endereco do video", urlDigitada, { urlDigitada = it },
-          Modifier.fillMaxWidth(), dica = "https://..."
-        )
-        Vao(10)
-        Campo(
-          "Referer (so se o servidor exigir)", refererDigitado, { refererDigitado = it },
-          Modifier.fillMaxWidth(), dica = "https://..."
-        )
-
-        Vao(16)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          Botao("Salvar e assistir", jeito = Jeito.PRIMARIO) {
-            val url = urlDigitada.trim()
-            if (url.startsWith("http")) {
-              val fonte = Fonte(
-                tipo = item.tipo,
-                id = item.id,
-                temporada = temporada,
-                episodio = episodio,
-                url = url,
-                referer = refererDigitado.trim().takeIf { it.isNotEmpty() },
-                nome = item.titulo
-              )
-              Guardados.guardarFonte(ctx, fonte)
-              pedindoFonte = false
-              aoAssistir(fonte, onde)
-            }
-          }
-          Botao("Cancelar", jeito = Jeito.FANTASMA) { pedindoFonte = false }
-          if (guardada != null) {
-            Botao("Apagar a fonte", jeito = Jeito.PERIGO, pequeno = true) {
-              Guardados.apagarFonte(ctx, item.tipo, item.id, temporada, episodio)
-              urlDigitada = ""
-              pedindoFonte = false
-            }
-          }
         }
       }
     }
