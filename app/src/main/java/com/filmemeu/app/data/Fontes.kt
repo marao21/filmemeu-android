@@ -70,7 +70,7 @@ object Fontes {
     var reserva: Fonte? = null
 
     for (opcao in opcoes) {
-      val url = try {
+      val saida = try {
         when {
           opcao.nome.equals("WatchPlay", true) -> doWatchPlay(opcao.embed)
           opcao.nome.equals("VIP Player", true) -> doVip(opcao.embed)
@@ -85,12 +85,12 @@ object Fontes {
         id = id,
         temporada = temporada,
         episodio = episodio,
-        url = url,
-        referer = opcao.embed,
+        url = saida.url,
+        referer = saida.referer,
         nome = opcao.nome
       )
 
-      if (abre(url, opcao.embed)) return achada
+      if (abre(saida.url, saida.referer)) return achada
       if (reserva == null) reserva = achada
     }
 
@@ -142,16 +142,42 @@ object Fontes {
    * quando ela existe, que e o que a maioria das pessoas quer - e so caimos
    * em qualquer `.m3u8` quando nao ha marca nenhuma.
    */
-  private suspend fun doWatchPlay(embed: String): String? {
-    val pagina = Http.texto(
-      embed,
-      mapOf("accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-    )
+  private suspend fun doWatchPlay(embed: String): Achado? = withContext(Dispatchers.IO) {
+    val pedido = Request.Builder()
+      .url(embed)
+      .header("user-agent", Http.UA)
+      .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+      .build()
 
-    val achado = DUBLADO.find(pagina) ?: QUALQUER.find(pagina) ?: return null
-    // O endereco vem com as barras escapadas, como JavaScript escreve.
-    return achado.groupValues[1].replace("\\/", "/")
+    Http.cliente.newCall(pedido).execute().use { r ->
+      if (!r.isSuccessful) return@use null
+      val pagina = r.body?.string() ?: return@use null
+
+      val achado = DUBLADO.find(pagina) ?: QUALQUER.find(pagina) ?: return@use null
+      // O endereco vem com as barras escapadas, como JavaScript escreve.
+      val url = achado.groupValues[1].replace("\\/", "/")
+
+      /*
+       * O referer e o endereco FINAL, depois do redirecionamento.
+       *
+       * A origem nos entrega o player em `v1.watchplay.shop`, e esse
+       * endereco redireciona para `v2`. Quem lê a pagina nem percebe: o
+       * cliente segue o 301 sozinho e o conteudo chega igual.
+       *
+       * Mas o servidor de video autoriza so uma origem, e ela e a v2 -
+       * esta escrito na resposta dele, no Access-Control-Allow-Origin.
+       * Mandando o endereco de antes do redirecionamento, pedimos em nome
+       * de uma origem que ele nao conhece, e a resposta e 403.
+       *
+       * Foi esse 403 que passou o dia inteiro parecendo "fonte fora do
+       * ar". Nao estava fora: estava recusando o nome errado.
+       */
+      Achado(url = url, referer = r.request.url.toString())
+    }
   }
+
+  /** Um endereco de video e o referer com que ele deve ser pedido. */
+  private data class Achado(val url: String, val referer: String)
 
   private val DUBLADO = Regex(
     "window\\.MyPlayerAudio=\"Dublado\"[\\s\\S]*?url:\"(https?:\\\\?/\\\\?/[^\"]+)\""
@@ -167,7 +193,7 @@ object Fontes {
    * O endereco so vem de um pedido feito com esse codigo - e e por isso que
    * nao adianta ler a pagina dele procurando `.m3u8`.
    */
-  private suspend fun doVip(embed: String): String? {
+  private suspend fun doVip(embed: String): Achado? {
     val codigo = CODIGO_VIP.find(embed)?.groupValues?.get(1) ?: return null
     val base = try {
       val u = java.net.URL(embed)
@@ -189,7 +215,8 @@ object Fontes {
 
     val json = JSONObject(resposta)
     val url = json.optString("videoSource").ifBlank { json.optString("securedLink") }
-    return url.ifBlank { null }
+    // Aqui o referer e a propria pagina do player, que nao redireciona.
+    return if (url.isBlank()) null else Achado(url = url, referer = embed)
   }
 
   /**
