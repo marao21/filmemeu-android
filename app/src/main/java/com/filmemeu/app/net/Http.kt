@@ -34,6 +34,32 @@ object Http {
     .followRedirects(true)
     .build()
 
+  fun originDe(referer: String?): String? {
+    if (referer.isNullOrBlank()) return null
+    return try {
+      val u = java.net.URI(referer)
+      val scheme = u.scheme ?: return null
+      val host = u.host ?: return null
+      val port = if (u.port > 0 && u.port != 80 && u.port != 443) ":${u.port}" else ""
+      "$scheme://$host$port"
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  /** Cabecalhos padrao de navegador para pedidos de video e playlists HLS. */
+  fun cabecalhosVideo(referer: String?): Map<String, String> {
+    val m = LinkedHashMap<String, String>()
+    m["User-Agent"] = UA
+    m["Accept"] = "*/*"
+    m["Accept-Language"] = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+    if (!referer.isNullOrBlank()) {
+      m["Referer"] = referer
+      originDe(referer)?.let { m["Origin"] = it }
+    }
+    return m
+  }
+
   private fun pedido(url: String, cabecalhos: Map<String, String>): Request {
     val b = Request.Builder().url(url)
       .header("user-agent", UA)

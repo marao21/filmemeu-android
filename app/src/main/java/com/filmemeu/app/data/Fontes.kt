@@ -46,55 +46,64 @@ object Fontes {
   /** Um player que a origem conhece para este titulo. */
   private data class Opcao(val nome: String, val embed: String, val idioma: String)
 
+  /** Resultado da conferencia real do endereco antes de entregar ao player. */
+  sealed class ResultadoVerificacao {
+    data class Valida(
+      val urlFinal: String,
+      val referer: String?,
+      val ehHls: Boolean
+    ) : ResultadoVerificacao()
+
+    data class Invalida(val motivo: String) : ResultadoVerificacao()
+  }
+
   /**
-   * Procura uma fonte que abra, e devolve a primeira que abrir.
+   * Procura uma fonte que abra de verdade, e devolve a primeira que passar
+   * na conferencia de conteudo.
    *
-   * A ordem importa pouco, mas a conferida importa muito: achar o endereco e
-   * o endereco funcionar sao coisas diferentes. A pagina do player entrega
-   * um link bem formado mesmo quando o servidor de video, logo adiante, vai
-   * recusar.
-   *
-   * Por isso cada endereco e testado com um pedido de dois bytes antes de
-   * ser dado como bom. Se nenhum passar, devolvemos o primeiro que ao menos
-   * apareceu - tentar e falhar e melhor do que dizer que nao existe.
+   * Nunca devolve um endereco que ja falhou na conferencia (por exemplo, um
+   * servidor devolvendo HTML ou 403 no lugar de `#EXTM3U`), para que o player
+   * nao tente abrir uma pagina de erro como se fosse playlist HLS.
    */
   suspend fun procurar(
     tipo: Tipo,
     id: Int,
     temporada: Int = 1,
-    episodio: Int = 1
+    episodio: Int = 1,
+    ignorarUrl: String? = null
   ): Fonte? {
     val referer = refererDaOrigem(tipo, id, temporada, episodio)
     val opcoes = listar(tipo, id, temporada, episodio, referer)
 
-    var reserva: Fonte? = null
-
     for (opcao in opcoes) {
-      val saida = try {
+      val candidatos = try {
         when {
           opcao.nome.equals("WatchPlay", true) -> doWatchPlay(opcao.embed)
           opcao.nome.equals("VIP Player", true) -> doVip(opcao.embed)
-          else -> null
+          else -> emptyList()
         }
-      } catch (e: Exception) {
-        null
-      } ?: continue
+      } catch (_: Exception) {
+        emptyList()
+      }
 
-      val achada = Fonte(
-        tipo = tipo,
-        id = id,
-        temporada = temporada,
-        episodio = episodio,
-        url = saida.url,
-        referer = saida.referer,
-        nome = opcao.nome
-      )
-
-      if (abre(saida.url, saida.referer)) return achada
-      if (reserva == null) reserva = achada
+      for (saida in candidatos) {
+        if (!ignorarUrl.isNullOrBlank() && saida.url == ignorarUrl) continue
+        val ver = verificar(saida.url, saida.referer)
+        if (ver is ResultadoVerificacao.Valida) {
+          return Fonte(
+            tipo = tipo,
+            id = id,
+            temporada = temporada,
+            episodio = episodio,
+            url = ver.urlFinal,
+            referer = ver.referer,
+            nome = opcao.nome
+          )
+        }
+      }
     }
 
-    return reserva
+    return null
   }
 
   /** Os players que a origem conhece para este titulo. */
@@ -138,11 +147,10 @@ object Fontes {
   /**
    * WatchPlay: o endereco esta escrito na propria pagina do player.
    *
-   * Ele aparece logo depois da marca de audio. Preferimos a faixa dublada
-   * quando ela existe, que e o que a maioria das pessoas quer - e so caimos
-   * em qualquer `.m3u8` quando nao ha marca nenhuma.
+   * Preferimos a faixa dublada quando existe e mantemos outros `.m3u8` da
+   * pagina como alternativas caso a primeira nao abra.
    */
-  private suspend fun doWatchPlay(embed: String): Achado? = withContext(Dispatchers.IO) {
+  private suspend fun doWatchPlay(embed: String): List<Achado> = withContext(Dispatchers.IO) {
     val pedido = Request.Builder()
       .url(embed)
       .header("user-agent", Http.UA)
@@ -150,29 +158,24 @@ object Fontes {
       .build()
 
     Http.cliente.newCall(pedido).execute().use { r ->
-      if (!r.isSuccessful) return@use null
-      val pagina = r.body?.string() ?: return@use null
+      if (!r.isSuccessful) return@use emptyList()
+      val pagina = r.body?.string() ?: return@use emptyList()
+      val refFinal = r.request.url.toString()
 
-      val achado = DUBLADO.find(pagina) ?: QUALQUER.find(pagina) ?: return@use null
-      // O endereco vem com as barras escapadas, como JavaScript escreve.
-      val url = achado.groupValues[1].replace("\\/", "/")
+      val urls = LinkedHashSet<String>()
+      DUBLADO.find(pagina)?.groupValues?.getOrNull(1)
+        ?.replace("\\/", "/")?.trim()
+        ?.takeIf { it.startsWith("http") }
+        ?.let(urls::add)
 
-      /*
-       * O referer e o endereco FINAL, depois do redirecionamento.
-       *
-       * A origem nos entrega o player em `v1.watchplay.shop`, e esse
-       * endereco redireciona para `v2`. Quem lê a pagina nem percebe: o
-       * cliente segue o 301 sozinho e o conteudo chega igual.
-       *
-       * Mas o servidor de video autoriza so uma origem, e ela e a v2 -
-       * esta escrito na resposta dele, no Access-Control-Allow-Origin.
-       * Mandando o endereco de antes do redirecionamento, pedimos em nome
-       * de uma origem que ele nao conhece, e a resposta e 403.
-       *
-       * Foi esse 403 que passou o dia inteiro parecendo "fonte fora do
-       * ar". Nao estava fora: estava recusando o nome errado.
-       */
-      Achado(url = url, referer = r.request.url.toString())
+      QUALQUER.findAll(pagina).forEach { m ->
+        m.groupValues.getOrNull(1)
+          ?.replace("\\/", "/")?.trim()
+          ?.takeIf { it.startsWith("http") }
+          ?.let(urls::add)
+      }
+
+      urls.map { Achado(url = it, referer = refFinal) }
     }
   }
 
@@ -190,16 +193,16 @@ object Fontes {
   /**
    * VIP Player: a pagina nao traz o endereco, traz um codigo.
    *
-   * O endereco so vem de um pedido feito com esse codigo - e e por isso que
-   * nao adianta ler a pagina dele procurando `.m3u8`.
+   * Devolve todas as URLs distintas informadas (`videoSource` e `securedLink`)
+   * para testar qual delas realmente entrega um stream valido.
    */
-  private suspend fun doVip(embed: String): Achado? {
-    val codigo = CODIGO_VIP.find(embed)?.groupValues?.get(1) ?: return null
+  private suspend fun doVip(embed: String): List<Achado> {
+    val codigo = CODIGO_VIP.find(embed)?.groupValues?.get(1) ?: return emptyList()
     val base = try {
       val u = java.net.URL(embed)
       u.protocol + "://" + u.host
-    } catch (e: Exception) {
-      return null
+    } catch (_: Exception) {
+      return emptyList()
     }
 
     val resposta = Http.enviar(
@@ -214,60 +217,150 @@ object Fontes {
     )
 
     val json = JSONObject(resposta)
-    val url = json.optString("videoSource").ifBlank { json.optString("securedLink") }
-    // Aqui o referer e a propria pagina do player, que nao redireciona.
-    return if (url.isBlank()) null else Achado(url = url, referer = embed)
+    val urls = LinkedHashSet<String>()
+    json.optString("videoSource").trim().takeIf { it.startsWith("http") }?.let(urls::add)
+    json.optString("securedLink").trim().takeIf { it.startsWith("http") }?.let(urls::add)
+    return urls.map { Achado(url = it, referer = embed) }
   }
 
   /**
-   * Este endereco entrega mesmo um video?
+   * Verifica se o endereco realmente entrega um stream reproduzivel.
    *
-   * Conferimos o CONTEUDO, e nao so o codigo da resposta - e essa
-   * diferenca e a que faz o filme tocar.
-   *
-   * A primeira versao pedia dois bytes com `Range` e aceitava qualquer
-   * resposta bem-sucedida. Dois problemas apareceram no aparelho:
-   *
-   * Servidor de video assinado costuma recusar pedido parcial, entao a
-   * conferida reprovava endereco bom. Reprovando os dois, a reserva ficava
-   * sendo o primeiro da fila - e o primeiro e o que estava fechado.
-   *
-   * E um 403 tambem "responde": vem com uma pagina de erro no corpo. Pelo
-   * codigo da resposta da para enganar; pelo conteudo, nao. O player
-   * recebia essa pagina e dizia o obvio:
-   *
-   *   ParserException: Input does not start with the #EXTM3U header
-   *
-   * Agora lemos o comeco do arquivo. Playlist de verdade abre com
-   * `#EXTM3U`; qualquer outra coisa, por mais que o servidor diga 200,
-   * nao e video.
-   *
-   * Para `.mp4` o teste e outro: ali basta a resposta vir bem, porque o
-   * conteudo e binario e nao tem marca de texto para conferir.
+   * - Se o corpo comeca com `#EXTM3U` (inclusive removendo BOM UTF-8): confirma
+   *   HLS. Quando for uma master playlist (`#EXT-X-STREAM-INF`), tambem confere
+   *   a primeira variante para evitar falha do `HlsPlaylistParser` logo apos o
+   *   inicio.
+   * - Se nao comeca com `#EXTM3U`: rejeita respostas HTML/JSON/texto de erro ou
+   *   URLs que se dizem playlist sem entregar `#EXTM3U`; aceita streams binarios
+   *   diretos (MP4/MKV/etc.) como nao-HLS.
    */
-  private suspend fun abre(url: String, referer: String): Boolean =
-    withContext(Dispatchers.IO) {
-      try {
-        val pedido = Request.Builder()
-          .url(url)
-          .header("user-agent", Http.UA)
-          .header("referer", referer)
-          .build()
-        Http.cliente.newCall(pedido).execute().use { r ->
-          if (!r.isSuccessful) return@use false
+  suspend fun verificar(
+    url: String,
+    referer: String?,
+    profundidade: Int = 0
+  ): ResultadoVerificacao = withContext(Dispatchers.IO) {
+    if (profundidade > 2) return@withContext ResultadoVerificacao.Invalida("Redirecionamento excessivo")
+    try {
+      val b = Request.Builder().url(url)
+      Http.cabecalhosVideo(referer).forEach { (k, v) -> b.header(k, v) }
 
-          val playlist = url.substringBefore("?").lowercase().let {
-            it.endsWith(".m3u8") || it.endsWith("master.txt") || it.contains("/hls/")
-          }
-          if (!playlist) return@use true
-
-          // So o comeco interessa. peekBody le ate esse tanto sem consumir
-          // o corpo e sem quebrar quando o arquivo e menor que o pedido.
-          val inicio = r.peekBody(64).string()
-          inicio.trimStart().startsWith("#EXTM3U")
+      Http.cliente.newCall(b.build()).execute().use { r ->
+        if (!r.isSuccessful) {
+          return@use ResultadoVerificacao.Invalida("servidor respondeu HTTP ${r.code}")
         }
-      } catch (e: Exception) {
-        false
+
+        val finalUrl = r.request.url.toString()
+        val contentType = r.header("Content-Type")
+          ?.lowercase()
+          ?.substringBefore(";")
+          ?.trim()
+          .orEmpty()
+
+        val amostraBytes = r.peekBody(512).bytes()
+        if (amostraBytes.isEmpty()) {
+          return@use ResultadoVerificacao.Invalida("resposta vazia")
+        }
+
+        val inicio = String(amostraBytes, Charsets.UTF_8)
+          .trimStart('\uFEFF')
+          .trimStart()
+
+        if (inicio.startsWith("#EXTM3U")) {
+          // Se for master playlist, valida a primeira variante antes de tocar.
+          if (profundidade == 0) {
+            val textoPlaylist = r.peekBody(16_384).string()
+              .trimStart('\uFEFF')
+            val variante = primeiraVarianteHls(textoPlaylist)
+            if (variante != null) {
+              val urlVariante = r.request.url.resolve(variante)?.toString() ?: variante
+              val verVariante = verificar(urlVariante, referer, profundidade + 1)
+              if (verVariante !is ResultadoVerificacao.Valida || !verVariante.ehHls) {
+                val motivo = (verVariante as? ResultadoVerificacao.Invalida)?.motivo
+                  ?: "variante HLS invalida"
+                return@use ResultadoVerificacao.Invalida(motivo)
+              }
+            }
+          }
+          return@use ResultadoVerificacao.Valida(
+            urlFinal = finalUrl,
+            referer = referer,
+            ehHls = true
+          )
+        }
+
+        val pareceTextoOuErro =
+          contentType.startsWith("text/") ||
+            contentType.contains("json") ||
+            contentType.contains("xml") ||
+            contentType.contains("javascript") ||
+            inicio.startsWith("<!", ignoreCase = true) ||
+            inicio.startsWith("<html", ignoreCase = true) ||
+            inicio.startsWith("<head", ignoreCase = true) ||
+            inicio.startsWith("<body", ignoreCase = true) ||
+            inicio.startsWith("{") ||
+            inicio.startsWith("[")
+
+        if (pareceTextoOuErro) {
+          return@use ResultadoVerificacao.Invalida("resposta nao e um video valido")
+        }
+
+        val ehVideoBinario =
+          contentType.startsWith("video/") ||
+            contentType.startsWith("audio/") ||
+            pareceBinarioVideo(amostraBytes)
+
+        val pareciaPlaylist = url.substringBefore("?").lowercase().let {
+          it.endsWith(".m3u8") || it.endsWith("master.txt") || it.contains("/hls/")
+        } || contentType.contains("mpegurl")
+
+        if (pareciaPlaylist && !ehVideoBinario) {
+          return@use ResultadoVerificacao.Invalida("playlist HLS sem cabecalho #EXTM3U")
+        }
+
+        ResultadoVerificacao.Valida(
+          urlFinal = finalUrl,
+          referer = referer,
+          ehHls = false
+        )
+      }
+    } catch (e: Exception) {
+      ResultadoVerificacao.Invalida(e.message ?: "falha de conexao")
+    }
+  }
+
+  private fun primeiraVarianteHls(playlist: String): String? {
+    val linhas = playlist.lines()
+    var aguardandoUri = false
+    for (linha in linhas) {
+      val t = linha.trim()
+      if (t.isEmpty()) continue
+      if (t.startsWith("#EXT-X-STREAM-INF")) {
+        aguardandoUri = true
+        continue
+      }
+      if (aguardandoUri && !t.startsWith("#")) {
+        return t
       }
     }
+    return null
+  }
+
+  private fun pareceBinarioVideo(bytes: ByteArray): Boolean {
+    if (bytes.size >= 8 &&
+      bytes[4] == 'f'.code.toByte() &&
+      bytes[5] == 't'.code.toByte() &&
+      bytes[6] == 'y'.code.toByte() &&
+      bytes[7] == 'p'.code.toByte()
+    ) return true // MP4 / QuickTime / M4V
+    if (bytes.size >= 4 &&
+      bytes[0] == 0x1A.toByte() &&
+      bytes[1] == 0x45.toByte() &&
+      bytes[2] == 0xDF.toByte() &&
+      bytes[3] == 0xA3.toByte()
+    ) return true // MKV / WebM
+    if (bytes.size >= 189 && bytes[0] == 0x47.toByte() && bytes[188] == 0x47.toByte()) {
+      return true // MPEG-TS
+    }
+    return false
+  }
 }

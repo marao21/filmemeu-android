@@ -46,24 +46,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Marca
 import com.filmemeu.app.data.Tipo
-import com.filmemeu.app.download.DownloadService
+import com.filmemeu.app.net.Http
 import com.filmemeu.app.ui.Cor
 import com.filmemeu.app.ui.Rodinha
 import com.filmemeu.app.ui.Vao
 import com.filmemeu.app.ui.VaoH
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * O nosso player.
@@ -139,6 +141,7 @@ class PlayerActivity : ComponentActivity() {
  * A barra e os controles somem sozinhos depois de um tempo quieto, como no
  * site, e voltam a qualquer toque ou tecla do controle.
  */
+@OptIn(UnstableApi::class)
 @Composable
 private fun Palco(
   url: String,
@@ -153,6 +156,12 @@ private fun Palco(
   aoSair: () -> Unit
 ) {
   val ctx = LocalContext.current
+
+  var urlAtual by remember { mutableStateOf(url) }
+  var refererAtual by remember { mutableStateOf(referer) }
+  var tentativa by remember { mutableStateOf(0) }
+  var tentouRenovar by remember { mutableStateOf(false) }
+  val refererRef = remember { AtomicReference(referer) }
 
   var tocando by remember { mutableStateOf(true) }
   var onde by remember { mutableStateOf(posicao) }
@@ -173,63 +182,72 @@ private fun Palco(
   var ultimoToque by remember { mutableStateOf(System.currentTimeMillis()) }
 
   /**
-   * O servidor de video responde conforme quem pergunta.
-   *
-   * Sem o cabecalho de navegador e, quando o servidor exigir, sem o
-   * Referer, o mesmo endereco que toca no computador volta 403 aqui. No
-   * site isso era o trabalho do api/proxy.js; no aplicativo nao ha desvio
-   * nenhum: o pedido sai do aparelho com os cabecalhos certos.
+   * ExoPlayer apoiado no mesmo OkHttpClient que valida as fontes, enviando
+   * User-Agent, Referer, Origin e Accept consistentes para playlist e segmentos.
    */
   val player = remember {
-    val http = DefaultHttpDataSource.Factory()
-      .setUserAgent(com.filmemeu.app.net.Http.UA)
-      .setAllowCrossProtocolRedirects(true)
-      .setConnectTimeoutMs(15000)
-      .setReadTimeoutMs(30000)
-    if (!referer.isNullOrEmpty()) {
-      http.setDefaultRequestProperties(mapOf("Referer" to referer))
+    val fabricaHttp = OkHttpDataSource.Factory(Http.cliente) {
+      Http.cabecalhosVideo(refererRef.get())
     }
-
-    /*
-     * Dizer ao player que aquilo e uma playlist, quando o nome nao diz.
-     *
-     * O ExoPlayer adivinha o formato pela extensao do endereco. Isso
-     * funciona para `.m3u8` e para `.mp4`, e falha calado para o VIP
-     * Player, que entrega a playlist num arquivo chamado `master.txt`.
-     * Por dentro e um `#EXTM3U` como qualquer outro; por fora parece
-     * arquivo de texto.
-     *
-     * O resultado, medido aqui no aparelho:
-     *
-     *   UnrecognizedInputFormatException: None of the available extractors
-     *
-     * Ou seja: o video baixou, a fonte liberou, nao houve 403 nenhum - o
-     * player so nao soube ler o que recebeu. Dizendo o tipo na mao,
-     * ele usa o leitor de HLS e toca.
-     *
-     * O site ja tinha aprendido isto, e esta escrito no api/fonte.js. O
-     * aplicativo nao sabia, e levou o mesmo tombo.
-     */
-    fun itemDe(endereco: String): MediaItem {
-      val limpo = endereco.substringBefore("?").lowercase()
-      val ehPlaylist = limpo.endsWith(".m3u8") ||
-        limpo.endsWith("master.txt") ||
-        limpo.contains("/hls/")
-
-      val b = MediaItem.Builder().setUri(endereco)
-      if (ehPlaylist) b.setMimeType(MimeTypes.APPLICATION_M3U8)
-      return b.build()
-    }
-
     ExoPlayer.Builder(ctx)
-      .setMediaSourceFactory(DefaultMediaSourceFactory(http))
+      .setMediaSourceFactory(DefaultMediaSourceFactory(fabricaHttp))
       .build()
-      .apply {
-        setMediaItem(itemDe(url))
-        if (posicao > 0) seekTo(posicao)
-        playWhenReady = true
-        prepare()
+  }
+
+  fun prepararNoPlayer(endereco: String, ehHls: Boolean, posInicial: Long) {
+    val b = MediaItem.Builder().setUri(endereco)
+    if (ehHls) b.setMimeType(MimeTypes.APPLICATION_M3U8)
+    player.stop()
+    player.setMediaItem(b.build())
+    if (posInicial > 0) player.seekTo(posInicial)
+    player.playWhenReady = true
+    player.prepare()
+  }
+
+  /*
+   * Conferencia antes de preparar o ExoPlayer: evita entregar HTML ou link
+   * expirado ao HlsPlaylistParser (ParserException: Input does not start with
+   * the #EXTM3U header) e renova a fonte automaticamente quando vencida.
+   */
+  LaunchedEffect(tentativa) {
+    carregando = true
+    falha = null
+    refererRef.set(refererAtual)
+
+    val ver = Fontes.verificar(urlAtual, refererAtual)
+    if (ver is Fontes.ResultadoVerificacao.Valida) {
+      urlAtual = ver.urlFinal
+      prepararNoPlayer(ver.urlFinal, ver.ehHls, onde)
+      return@LaunchedEffect
+    }
+
+    val motivo = (ver as Fontes.ResultadoVerificacao.Invalida).motivo
+    if (!tentouRenovar && id > 0) {
+      tentouRenovar = true
+      Guardados.apagarFonte(ctx, tipo, id, temporada, episodio)
+      val nova = try {
+        Fontes.procurar(tipo, id, temporada, episodio, ignorarUrl = urlAtual)
+      } catch (_: Exception) {
+        null
       }
+      if (nova != null) {
+        Guardados.guardarFonte(ctx, nova)
+        urlAtual = nova.url
+        refererAtual = nova.referer
+        refererRef.set(nova.referer)
+        val verNova = Fontes.verificar(nova.url, nova.referer)
+        if (verNova is Fontes.ResultadoVerificacao.Valida) {
+          urlAtual = verNova.urlFinal
+          prepararNoPlayer(verNova.urlFinal, verNova.ehHls, onde)
+          return@LaunchedEffect
+        }
+      }
+    }
+
+    falha = "Nao deu para tocar este endereco ($motivo). " +
+      "O servidor pode ter recusado o pedido ou o link expirou."
+    carregando = false
+    abertura = false
   }
 
   DisposableEffect(Unit) {
@@ -251,9 +269,36 @@ private fun Palco(
       }
 
       override fun onPlayerError(erro: PlaybackException) {
+        if (!tentouRenovar && id > 0) {
+          tentouRenovar = true
+          carregando = true
+          falha = null
+          escopo.launch {
+            Guardados.apagarFonte(ctx, tipo, id, temporada, episodio)
+            val nova = try {
+              Fontes.procurar(tipo, id, temporada, episodio, ignorarUrl = urlAtual)
+            } catch (_: Exception) {
+              null
+            }
+            if (nova != null) {
+              Guardados.guardarFonte(ctx, nova)
+              urlAtual = nova.url
+              refererAtual = nova.referer
+              refererRef.set(nova.referer)
+              tentativa++
+            } else {
+              falha = "Nao deu para tocar este endereco. " +
+                "O servidor pode ter recusado o pedido ou o link expirou."
+              carregando = false
+              abertura = false
+            }
+          }
+          return
+        }
         falha = "Nao deu para tocar este endereco. " +
           "O servidor pode ter recusado o pedido ou o link expirou."
         carregando = false
+        abertura = false
       }
     }
     player.addListener(ouvinte)
@@ -374,8 +419,16 @@ private fun Palco(
           Vao(8)
           Text(falha!!, color = Cor.muted, fontSize = 13.sp)
           Vao(18)
-          com.filmemeu.app.ui.Botao("Voltar", jeito = com.filmemeu.app.ui.Jeito.PRIMARIO) {
-            aoSair()
+          Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            com.filmemeu.app.ui.Botao("Tentar novamente", jeito = com.filmemeu.app.ui.Jeito.PRIMARIO) {
+              tentouRenovar = false
+              falha = null
+              carregando = true
+              tentativa++
+            }
+            com.filmemeu.app.ui.Botao("Voltar", jeito = com.filmemeu.app.ui.Jeito.FANTASMA) {
+              aoSair()
+            }
           }
         }
       }
@@ -458,10 +511,6 @@ private fun Palco(
             }
           }
           VaoH(8)
-        }
-
-        com.filmemeu.app.ui.Botao("Baixar", pequeno = true) {
-          DownloadService.baixar(ctx, url, referer, titulo)
         }
       }
     }

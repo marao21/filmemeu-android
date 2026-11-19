@@ -123,8 +123,8 @@ class DownloadService : Service() {
     val destino = File(pasta(), limpar(nome) + ".mp4")
     val jaTem = if (destino.exists()) destino.length() else 0L
 
-    val b = Request.Builder().url(url).header("user-agent", Http.UA)
-    if (!referer.isNullOrEmpty()) b.header("referer", referer)
+    val b = Request.Builder().url(url)
+    Http.cabecalhosVideo(referer).forEach { (k, v) -> b.header(k, v) }
     if (jaTem > 0) b.header("range", "bytes=" + jaTem + "-")
 
     Http.cliente.newCall(b.build()).execute().use { r ->
@@ -171,9 +171,12 @@ class DownloadService : Service() {
    * que a medida de duracao faz.
    */
   private suspend fun baixarHls(url: String, referer: String?, nome: String): File {
-    val cabecalhos = if (referer.isNullOrEmpty()) emptyMap() else mapOf("Referer" to referer)
+    val cabecalhos = Http.cabecalhosVideo(referer)
     var endereco = url
-    var texto = Http.texto(endereco, cabecalhos)
+    var texto = Http.texto(endereco, cabecalhos).trimStart('\uFEFF')
+    if (!texto.trimStart().startsWith("#EXTM3U")) {
+      throw Exception("a playlist HLS nao e valida")
+    }
 
     var pedacos = segmentosDe(texto, endereco)
     if (pedacos.isEmpty()) {
@@ -181,7 +184,10 @@ class DownloadService : Service() {
         .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
         ?: throw Exception("a playlist nao tem segmento nenhum")
       endereco = Medida.resolver(endereco, variante)
-      texto = Http.texto(endereco, cabecalhos)
+      texto = Http.texto(endereco, cabecalhos).trimStart('\uFEFF')
+      if (!texto.trimStart().startsWith("#EXTM3U")) {
+        throw Exception("a variante HLS nao e valida")
+      }
       pedacos = segmentosDe(texto, endereco)
     }
     if (pedacos.isEmpty()) throw Exception("a playlist nao tem segmento nenhum")
@@ -189,8 +195,8 @@ class DownloadService : Service() {
     val destino = File(pasta(), limpar(nome) + ".ts")
     FileOutputStream(destino, false).use { saida ->
       pedacos.forEachIndexed { i, pedaco ->
-        val b = Request.Builder().url(pedaco).header("user-agent", Http.UA)
-        if (!referer.isNullOrEmpty()) b.header("referer", referer)
+        val b = Request.Builder().url(pedaco)
+        cabecalhos.forEach { (k, v) -> b.header(k, v) }
 
         Http.cliente.newCall(b.build()).execute().use { r ->
           if (!r.isSuccessful) throw Exception("o segmento " + (i + 1) + " respondeu " + r.code)

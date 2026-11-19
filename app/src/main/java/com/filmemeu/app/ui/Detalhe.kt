@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -112,20 +112,28 @@ fun TelaDetalhe(
    * carta, nao a primeira.
    */
   fun assistir(doComeco: Boolean) {
-    val guardadaAgora = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
-    if (guardadaAgora != null) {
-      aoAssistir(guardadaAgora, if (doComeco) 0L else onde)
-      return
-    }
-
     if (procurandoFonte) return
     procurandoFonte = true
     recadoDaBusca = ""
 
     escopo.launch {
+      val guardadaAgora = Guardados.fonte(ctx, item.tipo, item.id, temporada, episodio)
+      if (guardadaAgora != null) {
+        val ver = Fontes.verificar(guardadaAgora.url, guardadaAgora.referer)
+        if (ver is Fontes.ResultadoVerificacao.Valida) {
+          procurandoFonte = false
+          val valida = guardadaAgora.copy(url = ver.urlFinal, referer = ver.referer)
+          if (valida.url != guardadaAgora.url) Guardados.guardarFonte(ctx, valida)
+          aoAssistir(valida, if (doComeco) 0L else onde)
+          return@launch
+        }
+        // Fonte guardada expirou ou devolveu erro: limpa e procura uma nova.
+        Guardados.apagarFonte(ctx, item.tipo, item.id, temporada, episodio)
+      }
+
       val achada = try {
         Fontes.procurar(item.tipo, item.id, temporada, episodio)
-      } catch (e: Exception) {
+      } catch (_: Exception) {
         null
       }
       procurandoFonte = false
@@ -146,15 +154,15 @@ fun TelaDetalhe(
       .background(Cor.bg)
       .verticalScroll(rememberScrollState())
   ) {
-    Box(Modifier.fillMaxWidth().height(380.dp)) {
+    Box(Modifier.fillMaxWidth().heightIn(min = 300.dp)) {
       AsyncImage(
         model = item.fundo ?: item.cartaz,
         contentDescription = null,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.matchParentSize(),
         contentScale = ContentScale.Crop
       )
       Box(
-        Modifier.fillMaxSize().background(
+        Modifier.matchParentSize().background(
           Brush.verticalGradient(listOf(Color(0x880F172A), Color(0x660F172A), Cor.bg))
         )
       )

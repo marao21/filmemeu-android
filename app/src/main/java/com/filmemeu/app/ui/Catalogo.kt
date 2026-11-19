@@ -448,7 +448,7 @@ private fun Destaque(
   aoInfo: () -> Unit
 ) {
   val alta = LocalConfiguration.current.screenHeightDp
-  Box(Modifier.fillMaxWidth().height((alta * 0.62f).coerceAtMost(420f).dp)) {
+  Box(Modifier.fillMaxWidth().height((alta * 0.72f).coerceIn(270f, 420f).dp)) {
     AsyncImage(
       model = item.fundo ?: item.cartaz,
       contentDescription = null,

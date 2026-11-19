@@ -44,7 +44,7 @@ object Medida {
     if (pareceHls(url)) duracaoHls(url, referer) else duracaoMp4(url, referer)
 
   private fun cabecalhos(referer: String?): Map<String, String> =
-    if (referer.isNullOrEmpty()) emptyMap() else mapOf("Referer" to referer)
+    Http.cabecalhosVideo(referer)
 
   /**
    * HLS: baixa a playlist e soma os #EXTINF.
