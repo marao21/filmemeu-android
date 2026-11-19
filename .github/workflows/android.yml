@@ -29,6 +29,29 @@ jobs:
       - name: Liberar o gradlew
         run: chmod +x ./gradlew
 
+      # O projeto assina com uma chave propria, em debug.keystore, que nao
+      # vai no repositorio. Sem ela a compilacao para antes de comecar - foi
+      # o que derrubou os dois ultimos builds.
+      #
+      # Com o segredo DEBUG_KEYSTORE_B64 a chave e sempre a MESMA, e ai a
+      # atualizacao instala por cima da versao que ja esta no aparelho. Sem
+      # ele, uma chave nova a cada build: compila, mas so instala depois de
+      # desinstalar a anterior.
+      - name: Preparar a chave de assinatura
+        env:
+          CHAVE: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$CHAVE" ]; then
+            echo "$CHAVE" | base64 -d > debug.keystore
+            echo "Chave fixa, vinda do segredo do repositorio."
+          else
+            keytool -genkeypair -v -keystore debug.keystore \
+              -storepass android -keypass android -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "AVISO: chave nova neste build. A atualizacao nao vai instalar por cima."
+          fi
+
       - name: Compilar APK de debug
         run: ./gradlew assembleDebug --console=plain --stacktrace
 

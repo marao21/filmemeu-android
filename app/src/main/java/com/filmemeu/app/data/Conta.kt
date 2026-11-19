@@ -42,6 +42,16 @@ object Conta {
   private fun prefs(ctx: Context) =
     ctx.getSharedPreferences("conta", Context.MODE_PRIVATE)
 
+  /**
+   * O endereco e os cabecalhos, para quem mais precisar falar com a conta.
+   *
+   * O progresso mora na mesma base e usa a mesma sessao; repetir a chave e o
+   * Bearer noutro arquivo seria ter dois lugares para errar.
+   */
+  internal val base: String get() = URL
+
+  internal fun cabecalhosDaConta(): Map<String, String> = cabecalhos()
+
   private fun cabecalhos(comSessao: Boolean = true): Map<String, String> {
     val m = HashMap<String, String>()
     m["apikey"] = PUBLICA

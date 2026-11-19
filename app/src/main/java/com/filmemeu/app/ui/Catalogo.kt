@@ -56,6 +56,7 @@ import com.filmemeu.app.data.Genero
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Item
 import com.filmemeu.app.data.Marca
+import com.filmemeu.app.data.Progresso
 import com.filmemeu.app.data.Tipo
 import com.filmemeu.app.data.Tmdb
 import kotlinx.coroutines.async
@@ -116,7 +117,16 @@ fun TelaCatalogo(
 
   LaunchedEffect(aba, infantil) {
     if (naMinha) {
+      // Primeiro o que ja esta no aparelho, para a fileira aparecer sem
+      // esperar a rede; depois o que a conta sabe, que pode trazer o que
+      // foi assistido em outro aparelho.
       continuar = Guardados.continuar(ctx)
+      try {
+        Guardados.absorver(ctx, Progresso.listar())
+        continuar = Guardados.continuar(ctx)
+      } catch (_: Exception) {
+        // Sem internet, vale o que esta guardado aqui.
+      }
       return@LaunchedEffect
     }
     recado = null

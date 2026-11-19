@@ -1,6 +1,7 @@
 package com.filmemeu.app.ui
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -33,14 +35,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -52,109 +52,27 @@ import com.filmemeu.app.data.Tmdb
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * As figuras de perfil.
+/*
+ * "Quem vai assistir?" - a mesma tela do site, traco por traco.
  *
- * Desenhos nossos, no mesmo traco da carinha do menu do site: rostos
- * geometricos simples de proposito. Num quadrado de cem pixels, visto do
- * sofa, o que a pessoa reconhece e a cor e a forma grossa; detalhe fino
- * some. E sendo nossos, mudam de estilo junto com o resto do aplicativo,
- * sem depender de imagem em servidor nenhum.
+ * Antes esta tela era parecida de longe e diferente de perto: as carinhas
+ * em fila no meio, seis desenhos proprios, dez cores. No site elas descem
+ * numa coluna encostada a esquerda, sao setenta e oito figuras e sete
+ * cores - e a capa ao fundo diz, no canto, que filme e aquele.
+ *
+ * Quem usa os dois nao devia ter de reaprender a tela ao trocar de
+ * aparelho; e um perfil feito na web nao devia chegar aqui com outra cara.
  */
-val FIGURAS = listOf("sorriso", "serio", "sono", "espanto", "oculos", "bigode")
 
-/** As cores que o site oferece na edicao do perfil. */
-val CORES = listOf(
-  "#38bdf8", "#f59e0b", "#34d399", "#a78bfa", "#f87171", "#fbbf24",
-  "#22d3ee", "#fb7185", "#4ade80", "#60a5fa"
-)
+/* ----- as medidas do site ----- */
 
-fun corDeTexto(hex: String): Color = try {
-  Color(android.graphics.Color.parseColor(hex))
-} catch (_: Exception) {
-  Cor.accent
-}
+/** A carinha parada e em foco: 70 e 112 pontos, como no CSS. */
+private val CARA_PARADA = 70
+private val CARA_EM_FOCO = 112
 
-/**
- * Um rosto desenhado na hora.
- *
- * Tudo em cima do quadrado da cor do perfil: dois olhos e uma boca, que
- * mudam conforme a figura escolhida.
- */
-@Composable
-fun Cara(figura: String, cor: String, tamanho: Int, modifier: Modifier = Modifier) {
-  val fundo = corDeTexto(cor)
-  val traco = Cor.bg
+/** A calha a esquerda onde o lapis mora, para ele nao cair fora da tela. */
+private val CALHA_DO_LAPIS = 52.dp
 
-  Box(
-    modifier
-      .size(tamanho.dp)
-      .background(fundo, RoundedCornerShape((tamanho / 4.5f).dp))
-      .drawBehind {
-        val l = size.width
-        val olhoY = l * 0.41f
-        val olhoR = l * 0.072f
-        val esq = Offset(l * 0.365f, olhoY)
-        val dir = Offset(l * 0.635f, olhoY)
-        val grosso = l * 0.075f
-
-        when (figura) {
-          "sono" -> {
-            // Olhos fechados: dois tracos.
-            drawLine(traco, Offset(esq.x - olhoR, olhoY), Offset(esq.x + olhoR, olhoY),
-              grosso, StrokeCap.Round)
-            drawLine(traco, Offset(dir.x - olhoR, olhoY), Offset(dir.x + olhoR, olhoY),
-              grosso, StrokeCap.Round)
-          }
-          "oculos" -> {
-            drawCircle(traco, olhoR * 1.9f, esq, style = Stroke(grosso * 0.7f))
-            drawCircle(traco, olhoR * 1.9f, dir, style = Stroke(grosso * 0.7f))
-            drawLine(traco, Offset(esq.x + olhoR * 1.9f, olhoY),
-              Offset(dir.x - olhoR * 1.9f, olhoY), grosso * 0.7f)
-          }
-          else -> {
-            drawCircle(traco, olhoR, esq)
-            drawCircle(traco, olhoR, dir)
-          }
-        }
-
-        // A boca.
-        when (figura) {
-          "serio" -> drawLine(
-            traco, Offset(l * 0.35f, l * 0.66f), Offset(l * 0.65f, l * 0.66f),
-            grosso, StrokeCap.Round
-          )
-          "espanto" -> drawCircle(traco, l * 0.085f, Offset(l * 0.5f, l * 0.66f))
-          "bigode" -> {
-            drawLine(
-              traco, Offset(l * 0.33f, l * 0.60f), Offset(l * 0.67f, l * 0.60f),
-              grosso * 1.5f, StrokeCap.Round
-            )
-            drawArc(
-              traco, 20f, 140f, false,
-              Offset(l * 0.33f, l * 0.56f), Size(l * 0.34f, l * 0.26f),
-              style = Stroke(grosso, cap = StrokeCap.Round)
-            )
-          }
-          else -> drawArc(
-            traco, 20f, 140f, false,
-            Offset(l * 0.32f, l * 0.46f), Size(l * 0.36f, l * 0.30f),
-            style = Stroke(grosso, cap = StrokeCap.Round)
-          )
-        }
-      }
-  )
-}
-
-/**
- * "Quem vai assistir?"
- *
- * Entre a conta e o catalogo: a conta e de quem paga, o perfil e de quem
- * assiste. Numa casa com mais de uma pessoa, e o perfil que separa o que
- * cada uma deixou pela metade.
- *
- * Ao fundo, as capas do catalogo se revezando, como no site.
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TelaPerfis(aoEscolher: (Perfil) -> Unit, aoSair: () -> Unit) {
@@ -203,6 +121,8 @@ fun TelaPerfis(aoEscolher: (Perfil) -> Unit, aoSair: () -> Unit) {
     }
   }
 
+  val emEdicao = editando != null || criandoNovo
+
   Box(Modifier.fillMaxSize().background(Cor.bg)) {
 
     if (capas.isNotEmpty()) {
@@ -210,46 +130,97 @@ fun TelaPerfis(aoEscolher: (Perfil) -> Unit, aoSair: () -> Unit) {
         AsyncImage(
           model = capas[qual].fundo,
           contentDescription = null,
-          modifier = Modifier.fillMaxSize().alpha(0.35f),
-          contentScale = androidx.compose.ui.layout.ContentScale.Crop
+          modifier = Modifier.fillMaxSize(),
+          contentScale = ContentScale.Crop
         )
       }
-      // O veu, para o texto continuar legivel por cima da capa.
-      Box(Modifier.fillMaxSize().background(Color(0xCC0F172A)))
+
+      /*
+       * O veu existe para o texto ser legivel sobre qualquer capa.
+       *
+       * Sao os dois mesmos degrades do site: um que escurece a esquerda,
+       * onde ficam os perfis, e outro que fecha o alto e o pe. Um veu
+       * chapado igual ao de antes apagava a capa inteira; assim ela
+       * continua a vista do lado direito, que e a graca dela.
+       */
+      Box(
+        Modifier.fillMaxSize().background(
+          Brush.horizontalGradient(
+            0.00f to Color(0xF5020617),
+            0.34f to Color(0xDB020617),
+            0.72f to Color(0x59020617),
+            1.00f to Color(0x8C020617)
+          )
+        )
+      )
+      Box(
+        Modifier.fillMaxSize().background(
+          Brush.verticalGradient(
+            0.00f to Color(0x8C020617),
+            0.30f to Color(0x00020617),
+            1.00f to Color(0x99020617)
+          )
+        )
+      )
     }
 
     // Quem esta ao fundo. Sem isto a capa e so um enfeite bonito: a pessoa
     // ve o filme, gosta, e nao tem como saber o nome dele.
     if (capas.isNotEmpty()) {
       val capa = capas[qualCapa]
-      Column(Modifier.align(Alignment.BottomStart).padding(28.dp)) {
+      Column(
+        Modifier
+          .align(Alignment.BottomEnd)
+          .padding(end = 40.dp, bottom = 40.dp)
+          .widthIn(max = 420.dp),
+        horizontalAlignment = Alignment.End
+      ) {
         Text(
-          if (capa.tipo == Tipo.FILME) "FILME" else "SERIE",
-          color = Cor.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold
+          when (capa.tipo) {
+            Tipo.FILME -> "FILME"
+            Tipo.SERIE -> "SÉRIE"
+            Tipo.ANIME -> "ANIME"
+          },
+          color = Color(0xFF93C5FD),
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Bold,
+          letterSpacing = 2.sp
         )
-        Text(capa.titulo, color = Cor.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Vao(4)
+        Text(
+          capa.titulo,
+          color = Color.White,
+          fontSize = 30.sp,
+          fontWeight = FontWeight.Black,
+          textAlign = TextAlign.End
+        )
         if (capa.nota != null) {
-          Text("Nota " + capa.nota, color = Cor.warn, fontSize = 12.sp)
+          Vao(6)
+          Text("★ " + String.format("%.1f", capa.nota), color = Color(0xFFE2E8F0), fontSize = 14.sp)
         }
       }
     }
 
+    /*
+     * A caixa encostada a esquerda, e nao no meio.
+     *
+     * E a mesma escolha do site: numa TV, a coluna da esquerda e a que o
+     * controle alcanca primeiro, e deixa a capa respirando do outro lado.
+     */
     Column(
       Modifier
         .fillMaxSize()
         .verticalScroll(rememberScrollState())
-        .padding(24.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
+        .padding(start = 32.dp + CALHA_DO_LAPIS, end = 32.dp, top = 24.dp, bottom = 24.dp),
       verticalArrangement = Arrangement.Center
     ) {
-      NomeMovFlix(tamanho = 22)
-      Vao(10)
-
-      val emEdicao = editando != null || criandoNovo
+      // A marca em cima, como quem diz de que casa e esta porta.
+      NomeMovFlix(tamanho = 34)
+      Vao(16)
 
       if (!emEdicao) {
-        Text("Quem vai assistir?", color = Cor.text, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-        Vao(26)
+        Text("Quem vai assistir?", color = Cor.text, fontSize = 25.sp, fontWeight = FontWeight.Bold)
+        Vao(22)
 
         if (recado != null) {
           Text(recado!!, color = Cor.danger, fontSize = 13.sp)
@@ -257,36 +228,21 @@ fun TelaPerfis(aoEscolher: (Perfil) -> Unit, aoSair: () -> Unit) {
         }
         if (carregando) Rodinha()
 
-        FlowRow(
-          horizontalArrangement = Arrangement.spacedBy(22.dp),
-          verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
+        // Em coluna, e nao em fila: a lista desce, como na TV.
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
           lista.forEach { p ->
             UmPerfil(p, aoTocar = { aoEscolher(p) }, aoEditar = { editando = p })
           }
-          // O lugar de criar outro, como no site.
-          if (lista.size < 5) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              val fonte = remember { MutableInteractionSource() }
-              val focado by fonte.collectIsFocusedAsState()
-              Box(
-                Modifier
-                  .size(100.dp)
-                  .border(if (focado) 3.dp else 2.dp, if (focado) Cor.text else Cor.lineSoft,
-                    RoundedCornerShape(22.dp))
-                  .focusable(interactionSource = fonte)
-                  .clickable(interactionSource = fonte, indication = null) { criandoNovo = true },
-                contentAlignment = Alignment.Center
-              ) {
-                Text("+", color = Cor.muted, fontSize = 40.sp)
-              }
-              Vao(8)
-              Text("Novo perfil", color = if (focado) Cor.text else Cor.muted, fontSize = 14.sp)
-            }
+
+          // O "mais" so aparece enquanto cabe: tres comuns por conta, alem
+          // do infantil. Mostrar um botao que vai dar erro nao ajuda
+          // ninguem.
+          if (lista.count { !it.infantil } < 3) {
+            NovoPerfil { criandoNovo = true }
           }
         }
 
-        Vao(30)
+        Vao(20)
         BotaoTexto("Sair da conta", tamanho = 14) {
           Conta.sair(ctx)
           aoSair()
@@ -327,38 +283,138 @@ fun TelaPerfis(aoEscolher: (Perfil) -> Unit, aoSair: () -> Unit) {
   }
 }
 
+/*
+ * Cada perfil e uma linha: a carinha e, quando em foco, o nome ao lado.
+ *
+ * Fora do foco a carinha e pequena e o nome nao aparece - sao tres ou
+ * quatro perfis numa casa, e a imagem basta para reconhecer. Em foco ela
+ * cresce e o nome entra, que e o que confirma a escolha antes do OK.
+ */
 @Composable
 private fun UmPerfil(p: Perfil, aoTocar: () -> Unit, aoEditar: () -> Unit) {
   val fonte = remember { MutableInteractionSource() }
   val focado by fonte.collectIsFocusedAsState()
+  val lado by animateDpAsState(
+    if (focado) CARA_EM_FOCO.dp else CARA_PARADA.dp,
+    label = "cara"
+  )
 
-  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    /*
+     * O lapis mora na calha a ESQUERDA da carinha, fora dela.
+     *
+     * Em cima do cartaz ele cobria o desenho e, no controle, o foco
+     * passava por ele sem querer. Ao lado, e uma parada do caminho so
+     * quando a pessoa vai para a esquerda - de proposito.
+     *
+     * Nunca no infantil: toda conta tem o dela, e apagar deixaria a casa
+     * sem lugar para a crianca.
+     */
+    Box(Modifier.size(CALHA_DO_LAPIS), contentAlignment = Alignment.Center) {
+      if (!p.infantil) {
+        val caneta = remember { MutableInteractionSource() }
+        val canetaEmFoco by caneta.collectIsFocusedAsState()
+        Text(
+          "✎",
+          color = if (canetaEmFoco) Cor.text else Cor.muted,
+          fontSize = 18.sp,
+          modifier = Modifier
+            .size(40.dp)
+            .border(
+              if (canetaEmFoco) 3.dp else 0.dp,
+              if (canetaEmFoco) Cor.accent else Color.Transparent,
+              CircleShape
+            )
+            .focusable(interactionSource = caneta)
+            .clickable(interactionSource = caneta, indication = null) { aoEditar() }
+            .padding(top = 8.dp),
+          textAlign = TextAlign.Center
+        )
+      }
+    }
+
     Box(
       Modifier
-        .size(if (focado) 108.dp else 100.dp)
+        .size(lado)
         .border(
           if (focado) 3.dp else 0.dp,
-          if (focado) Cor.text else Color.Transparent,
-          RoundedCornerShape(24.dp)
+          if (focado) Color.White else Color.Transparent,
+          RoundedCornerShape(8.dp)
         )
         .focusable(interactionSource = fonte)
         .clickable(interactionSource = fonte, indication = null) { aoTocar() },
       contentAlignment = Alignment.Center
     ) {
-      Cara(p.figura, p.cor, if (focado) 100 else 94)
+      Cara(p.figura, p.cor, (lado.value - (if (focado) 6 else 0)).toInt())
+
+      /*
+       * O selo do perfil infantil: uma etiqueta, nao uma barra.
+       *
+       * O nome pode ser o da crianca - Ana, Pedro -, e e isso que a casa
+       * quer ver. Mas quem escolhe precisa saber, de relance, que aquele
+       * perfil e o que so mostra coisa de crianca.
+       */
+      if (p.infantil) {
+        Text(
+          "INFANTIL",
+          color = Color(0xFF0B1220),
+          fontSize = (lado.value / 8f).sp,
+          fontWeight = FontWeight.Black,
+          modifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(bottom = 6.dp)
+            .background(corDeTexto(p.cor), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+        )
+      }
     }
-    Vao(8)
+
+    // O nome so entra com o foco; parado, a carinha basta.
+    VaoH(16)
     Text(
       p.nome,
-      color = if (focado) Cor.text else Cor.muted,
-      fontSize = 15.sp,
-      fontWeight = if (focado) FontWeight.SemiBold else FontWeight.Normal
+      color = Color.White,
+      fontSize = 21.sp,
+      fontWeight = FontWeight.Black,
+      modifier = Modifier.alpha(if (focado) 1f else 0f)
     )
-    // Nunca no infantil: toda conta tem o dela, e apagar deixaria a casa
-    // sem lugar para a crianca.
-    if (!p.infantil) {
-      BotaoTexto("editar", tamanho = 11) { aoEditar() }
+  }
+}
+
+/** O lugar de criar outro: a mesma linha, com um mais no lugar da cara. */
+@Composable
+private fun NovoPerfil(aoTocar: () -> Unit) {
+  val fonte = remember { MutableInteractionSource() }
+  val focado by fonte.collectIsFocusedAsState()
+  val lado by animateDpAsState(
+    if (focado) CARA_EM_FOCO.dp else CARA_PARADA.dp,
+    label = "novo"
+  )
+
+  Row(verticalAlignment = Alignment.CenterVertically) {
+    Box(Modifier.size(CALHA_DO_LAPIS))
+    Box(
+      Modifier
+        .size(lado)
+        .border(
+          if (focado) 3.dp else 2.dp,
+          if (focado) Color.White else Cor.lineSoft,
+          RoundedCornerShape(8.dp)
+        )
+        .focusable(interactionSource = fonte)
+        .clickable(interactionSource = fonte, indication = null) { aoTocar() },
+      contentAlignment = Alignment.Center
+    ) {
+      Text("+", color = if (focado) Color.White else Cor.muted, fontSize = (lado.value / 2.4f).sp)
     }
+    VaoH(16)
+    Text(
+      "Novo perfil",
+      color = Color.White,
+      fontSize = 21.sp,
+      fontWeight = FontWeight.Black,
+      modifier = Modifier.alpha(if (focado) 1f else 0f)
+    )
   }
 }
 
@@ -382,7 +438,7 @@ private fun EditorDePerfil(
 
   Column(
     Modifier
-      .widthIn(max = 420.dp)
+      .widthIn(max = 620.dp)
       .border(1.dp, Cor.lineSoft, raio)
       .background(Cor.panel, raio)
       .padding(22.dp)
@@ -397,37 +453,58 @@ private fun EditorDePerfil(
       dica = "Como quer ser chamado")
 
     Vao(16)
-    Text("Figura", color = Cor.muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Text("Figura", color = Cor.muted, fontSize = 13.sp)
     Vao(8)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    /*
+     * As setenta e oito figuras do site: dezessete rostos e sessenta e uma
+     * caricaturas, na mesma ordem. A grade rola junto com a caixa, entao
+     * nenhuma fica inalcancavel pelo controle.
+     */
+    FlowRow(
+      Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
       FIGURAS.forEach { f ->
         val escolhida = f == figura
+        val fonte = remember { MutableInteractionSource() }
+        val focada by fonte.collectIsFocusedAsState()
         Box(
           Modifier
-            .border(2.dp, if (escolhida) Cor.text else Color.Transparent, RoundedCornerShape(12.dp))
-            .focusable()
-            .clickable { figura = f }
+            .border(
+              2.dp,
+              if (escolhida || focada) Color.White else Color.Transparent,
+              RoundedCornerShape(10.dp)
+            )
+            .focusable(interactionSource = fonte)
+            .clickable(interactionSource = fonte, indication = null) { figura = f }
             .padding(2.dp)
         ) {
-          Cara(f, cor, 42)
+          Cara(f, cor, 38)
         }
       }
     }
 
     Vao(16)
-    Text("Cor", color = Cor.muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Text("Cor", color = Cor.muted, fontSize = 13.sp)
     Vao(8)
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       CORES.forEach { c ->
         val escolhida = c == cor
+        val fonte = remember { MutableInteractionSource() }
+        val focada by fonte.collectIsFocusedAsState()
         Box(
           Modifier
-            .size(34.dp)
-            .border(2.dp, if (escolhida) Cor.text else Color.Transparent, CircleShape)
+            .size(30.dp)
+            .border(
+              2.dp,
+              if (escolhida || focada) Color.White else Color.Transparent,
+              CircleShape
+            )
             .padding(3.dp)
             .background(corDeTexto(c), CircleShape)
-            .focusable()
-            .clickable { cor = c }
+            .focusable(interactionSource = fonte)
+            .clickable(interactionSource = fonte, indication = null) { cor = c }
         )
       }
     }

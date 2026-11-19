@@ -82,6 +82,29 @@ object Guardados {
     prefs(ctx).edit().putString(gaveta("continuar"), arr.toString()).apply()
   }
 
+  /**
+   * Traz para o aparelho o que a conta sabe.
+   *
+   * Quem assistiu no computador e pegou o telefone tem, aqui, uma gaveta
+   * vazia e, na conta, a marca certa. Juntar as duas pela data resolve os
+   * dois sentidos de uma vez: o que e mais novo la desce, o que e mais novo
+   * aqui fica - e nada do que foi assistido sem internet se perde.
+   */
+  fun absorver(ctx: Context, deLa: List<Marca>) {
+    if (deLa.isEmpty()) return
+
+    val junto = LinkedHashMap<String, Marca>()
+    (continuar(ctx) + deLa).forEach { m ->
+      val chave = m.tipo.chave + ":" + m.id
+      val tinha = junto[chave]
+      if (tinha == null || m.quando > tinha.quando) junto[chave] = m
+    }
+
+    val arr = JSONArray()
+    junto.values.sortedByDescending { it.quando }.take(20).forEach { arr.put(jsonDe(it)) }
+    prefs(ctx).edit().putString(gaveta("continuar"), arr.toString()).apply()
+  }
+
   fun posicaoDe(ctx: Context, tipo: Tipo, id: Int, temporada: Int, episodio: Int): Long {
     val m = continuar(ctx).firstOrNull {
       it.tipo == tipo && it.id == id &&

@@ -61,6 +61,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Marca
+import com.filmemeu.app.data.Progresso
 import com.filmemeu.app.data.Tipo
 import com.filmemeu.app.net.Http
 import com.filmemeu.app.ui.Cor
@@ -338,10 +339,23 @@ private fun Palco(
       val p = player.currentPosition
       val d = player.duration
       if (d > 0) {
-        Guardados.marcar(
-          ctx,
+        val marca =
           Marca(tipo, id, titulo, cartaz, temporada, episodio, p, d, System.currentTimeMillis())
-        )
+        Guardados.marcar(ctx, marca)
+
+        /*
+         * E tambem para a conta, para o site e os outros aparelhos saberem.
+         *
+         * Vai solto de proposito: a tela esta fechando, e segurar o fecho
+         * esperando a rede faria o player demorar a sumir. Se o pedido
+         * falhar, o que ficou guardado aqui sobe na proxima vez.
+         */
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+          try {
+            Progresso.guardar(marca, terminou = marca.fracao >= 0.95f)
+          } catch (_: Exception) {
+          }
+        }
       }
       player.removeListener(ouvinte)
       player.release()
