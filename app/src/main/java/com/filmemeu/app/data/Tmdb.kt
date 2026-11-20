@@ -2,6 +2,9 @@ package com.filmemeu.app.data
 
 import com.filmemeu.app.net.Http
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 /**
  * O catalogo, falando direto com o TMDB pela ponte do Supabase.
@@ -22,6 +25,9 @@ object Tmdb {
   private const val IMG_LARGA = "https://image.tmdb.org/t/p/w1280"
 
   private const val ANIME_GENERO = "16"
+
+  /** ID virtual da categoria "Lancamentos" (todos os titulos novos dentro de 1 ano). */
+  const val GENERO_LANCAMENTOS = -100
 
   /**
    * Generos de serie que o TMDB nao traduz para portugues.
@@ -178,12 +184,56 @@ object Tmdb {
     return itens(pedir("/discover/" + tipo.tmdb, params), tipo, false)
   }
 
+  /**
+   * Todos os lancamentos mais novos dentro de um ano (ultimos 12 meses ate hoje),
+   * ordenados do mais recente para o mais antigo, com paginacao completa.
+   */
+  suspend fun lancamentosDoAno(
+    tipo: Tipo,
+    pagina: Int = 1,
+    infantil: Boolean = false
+  ): List<Item> {
+    val formato = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val hoje = Calendar.getInstance()
+    val dataFim = formato.format(hoje.time)
+    val umAnoAtras = (hoje.clone() as Calendar).apply { add(Calendar.YEAR, -1) }
+    val dataInicio = formato.format(umAnoAtras.time)
+
+    val params = HashMap<String, String>()
+    params["page"] = "$pagina"
+
+    if (tipo == Tipo.FILME) {
+      params["primary_release_date.gte"] = dataInicio
+      params["primary_release_date.lte"] = dataFim
+      params["sort_by"] = "primary_release_date.desc"
+      params["vote_count.gte"] = if (infantil) "5" else "10"
+    } else {
+      params["first_air_date.gte"] = dataInicio
+      params["first_air_date.lte"] = dataFim
+      params["sort_by"] = "first_air_date.desc"
+      params["vote_count.gte"] = if (tipo == Tipo.ANIME || infantil) "5" else "10"
+    }
+
+    if (infantil) {
+      val base = if (tipo == Tipo.FILME) INFANTIL_FILME else INFANTIL_SERIE
+      params["with_genres"] = if (tipo == Tipo.ANIME) "$ANIME_GENERO,$base" else base
+      params["without_genres"] = INFANTIL_FORA
+      if (tipo == Tipo.ANIME) params["with_original_language"] = "ja"
+    } else if (tipo == Tipo.ANIME) {
+      params["with_genres"] = ANIME_GENERO
+      params["with_original_language"] = "ja"
+    }
+
+    return itens(pedir("/discover/" + tipo.tmdb, params), tipo, false)
+  }
+
   suspend fun porGenero(
     tipo: Tipo,
     generoId: Int?,
     pagina: Int = 1,
     infantil: Boolean = false
   ): List<Item> {
+    if (generoId == GENERO_LANCAMENTOS) return lancamentosDoAno(tipo, pagina, infantil)
     if (infantil) return doRecorteInfantil(tipo, pagina, generoId)
 
     val params = HashMap<String, String>()

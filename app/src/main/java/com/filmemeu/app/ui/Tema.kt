@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 
 /**
@@ -169,7 +172,9 @@ fun Campo(
   senha: Boolean = false,
   email: Boolean = false,
   numero: Boolean = false,
-  acaoDoTeclado: ImeAction = ImeAction.Next
+  compacto: Boolean = false,
+  acaoDoTeclado: ImeAction = ImeAction.Next,
+  aoEnviar: (() -> Unit)? = null
 ) {
   val fonte = remember { MutableInteractionSource() }
   val focado by fonte.collectIsFocusedAsState()
@@ -179,9 +184,9 @@ fun Campo(
       Text(
         rotulo,
         color = Cor.muted,
-        fontSize = 13.sp,
+        fontSize = if (compacto) 12.sp else 13.sp,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(bottom = 6.dp)
+        modifier = Modifier.padding(bottom = if (compacto) 4.dp else 6.dp)
       )
     }
     Box(
@@ -189,17 +194,20 @@ fun Campo(
         .fillMaxWidth()
         .border(if (focado) 2.dp else 1.dp, if (focado) Cor.accentStrong else Cor.lineSoft, raio8)
         .background(Cor.bg, raio8)
-        .padding(horizontal = 12.dp, vertical = 11.dp)
+        .padding(horizontal = 12.dp, vertical = if (compacto) 8.dp else 11.dp)
     ) {
       if (valor.isEmpty() && dica.isNotEmpty()) {
-        Text(dica, color = Cor.placeholder, fontSize = 14.sp)
+        Text(dica, color = Cor.placeholder, fontSize = if (compacto) 13.sp else 14.sp)
       }
       BasicTextField(
         value = valor,
         onValueChange = aoMudar,
         singleLine = true,
         interactionSource = fonte,
-        textStyle = LocalTextStyle.current.copy(color = Cor.text, fontSize = 14.sp),
+        textStyle = LocalTextStyle.current.copy(
+          color = Cor.text,
+          fontSize = if (compacto) 13.sp else 14.sp
+        ),
         cursorBrush = SolidColor(Cor.accent),
         visualTransformation =
           if (senha) PasswordVisualTransformation() else VisualTransformation.None,
@@ -211,6 +219,9 @@ fun Campo(
             else -> KeyboardType.Text
           },
           imeAction = acaoDoTeclado
+        ),
+        keyboardActions = KeyboardActions(
+          onDone = { aoEnviar?.invoke() }
         ),
         modifier = Modifier.fillMaxWidth()
       )
@@ -279,7 +290,10 @@ fun Abas(
   modifier: Modifier = Modifier,
   aoEscolher: (Int) -> Unit
 ) {
-  Row(modifier, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+  Row(
+    modifier.horizontalScroll(rememberScrollState()),
+    horizontalArrangement = Arrangement.spacedBy(2.dp)
+  ) {
     nomes.forEachIndexed { i, nome ->
       val fonte = remember(i) { MutableInteractionSource() }
       val focada by fonte.collectIsFocusedAsState()

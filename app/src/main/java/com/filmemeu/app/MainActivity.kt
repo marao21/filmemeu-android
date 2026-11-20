@@ -2,11 +2,16 @@ package com.filmemeu.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -18,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.filmemeu.app.data.Conta
-import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Item
 import com.filmemeu.app.player.PlayerActivity
 import com.filmemeu.app.ui.Cor
@@ -27,7 +31,6 @@ import com.filmemeu.app.ui.TelaCatalogo
 import com.filmemeu.app.ui.TelaDetalhe
 import com.filmemeu.app.ui.TelaLogin
 import com.filmemeu.app.ui.TelaPerfis
-import kotlinx.coroutines.launch
 
 /**
  * As telas, na ordem em que a casa abre.
@@ -41,6 +44,10 @@ private enum class Onde { ABRINDO, LOGIN, PERFIS, CATALOGO, DETALHE }
 class MainActivity : ComponentActivity() {
 
   override fun onCreate(estado: Bundle?) {
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+    )
     super.onCreate(estado)
     setContent { Casa() }
   }
@@ -49,10 +56,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Casa() {
   val ctx = LocalContext.current
-  val escopo = rememberCoroutineScope()
 
   var onde by remember { mutableStateOf(Onde.ABRINDO) }
   var titulo by remember { mutableStateOf<Item?>(null) }
+  var aba by remember { mutableStateOf(0) }
+  var buscaAberta by remember { mutableStateOf(false) }
 
   /*
    * Quem ja entrou nao entra de novo.
@@ -64,7 +72,10 @@ private fun Casa() {
   LaunchedEffect(Unit) {
     Conta.recuperar(ctx)
     if (Conta.entrou) {
-      Conta.renovar(ctx)
+      try {
+        Conta.renovar(ctx)
+      } catch (_: Exception) {
+      }
       onde = if (Conta.entrou) Onde.PERFIS else Onde.LOGIN
     } else {
       onde = Onde.LOGIN
@@ -72,18 +83,26 @@ private fun Casa() {
   }
 
   BackHandler(enabled = onde == Onde.DETALHE || onde == Onde.CATALOGO) {
-    when (onde) {
-      Onde.DETALHE -> {
+    when {
+      onde == Onde.DETALHE -> {
         titulo = null
         onde = Onde.CATALOGO
       }
+      onde == Onde.CATALOGO && buscaAberta -> {
+        buscaAberta = false
+      }
       // Do catalogo, o Voltar devolve a escolha de perfil, como o site faz.
-      Onde.CATALOGO -> onde = Onde.PERFIS
+      onde == Onde.CATALOGO -> onde = Onde.PERFIS
       else -> Unit
     }
   }
 
-  Box(Modifier.fillMaxSize().background(Cor.bg)) {
+  Box(
+    Modifier
+      .fillMaxSize()
+      .background(Cor.bg)
+      .windowInsetsPadding(WindowInsets.safeDrawing)
+  ) {
     when (onde) {
       Onde.ABRINDO -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Rodinha(tamanho = 44)
@@ -94,12 +113,23 @@ private fun Casa() {
       Onde.PERFIS -> TelaPerfis(
         aoEscolher = { perfil ->
           Conta.perfil = perfil
+          aba = 0
+          buscaAberta = false
           onde = Onde.CATALOGO
         },
         aoSair = { onde = Onde.LOGIN }
       )
 
       Onde.CATALOGO -> TelaCatalogo(
+        aba = aba,
+        buscaAberta = buscaAberta,
+        aoTrocarAba = { novaAba ->
+          aba = novaAba
+          buscaAberta = false
+        },
+        aoAbrirBusca = {
+          buscaAberta = !buscaAberta
+        },
         aoAbrirTitulo = { item ->
           titulo = item
           onde = Onde.DETALHE
@@ -121,6 +151,28 @@ private fun Casa() {
         } else {
           TelaDetalhe(
             item = item,
+            abaAtual = aba,
+            aoTrocarAba = { novaAba ->
+              aba = novaAba
+              buscaAberta = false
+              titulo = null
+              onde = Onde.CATALOGO
+            },
+            aoAbrirBusca = {
+              buscaAberta = true
+              titulo = null
+              onde = Onde.CATALOGO
+            },
+            aoTrocarPerfil = {
+              Conta.perfil = null
+              titulo = null
+              onde = Onde.PERFIS
+            },
+            aoSair = {
+              Conta.sair(ctx)
+              titulo = null
+              onde = Onde.LOGIN
+            },
             aoVoltar = {
               titulo = null
               onde = Onde.CATALOGO

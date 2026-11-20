@@ -36,12 +36,18 @@ data class Genero(val id: Int, val nome: String)
 
 data class Temporada(val numero: Int, val nome: String, val episodios: Int)
 
+/** De qual endpoint uma fileira puxa mais paginas ao rolar para o lado. */
+enum class OrigemFileira { LANCAMENTOS, CONSAGRADOS, GENERO }
+
 /** Uma fileira da casa: o nome em cima e os cartazes embaixo. */
 data class Fileira(
   val nome: String,
   val itens: List<Item>,
   val tipo: Tipo,
-  val generoId: Int? = null
+  val generoId: Int? = null,
+  val origem: OrigemFileira = OrigemFileira.GENERO,
+  val paginaAtual: Int = 1,
+  val temMais: Boolean = true
 )
 
 data class Perfil(

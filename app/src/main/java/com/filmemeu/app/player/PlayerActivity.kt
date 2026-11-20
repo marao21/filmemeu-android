@@ -2,28 +2,50 @@ package com.filmemeu.app.player
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
-import android.view.SurfaceView
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -35,29 +57,45 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.annotation.OptIn
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.filmemeu.app.data.Fontes
 import com.filmemeu.app.data.Guardados
 import com.filmemeu.app.data.Marca
@@ -67,19 +105,18 @@ import com.filmemeu.app.net.Http
 import com.filmemeu.app.ui.Cor
 import com.filmemeu.app.ui.Rodinha
 import com.filmemeu.app.ui.Vao
-import com.filmemeu.app.ui.VaoH
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 
 /**
- * O nosso player.
- *
- * No site era um video do navegador com hls.js por cima. Aqui e o ExoPlayer
- * do proprio Android: HLS e MP4 sem biblioteca de fora, decodificacao do
- * aparelho, e os controles desenhados por nos — que e o que faz o controle
- * remoto da TV chegar neles.
+ * Player fullscreen do MovFlix, alinhado visualmente ao player da versao web:
+ * - Tela cheia imersiva com barra inferior minimalista (titulo, play/pause,
+ *   tempo 00:01 / 1:40:15, resolucao discreta, trilho com bolinha branca
+ *   arrastavel/focavel e botao de expandir/ajustar tela).
+ * - Funciona com toque no celular/tablet e com controle remoto em TV Box/Stick.
  */
 class PlayerActivity : ComponentActivity() {
 
@@ -121,9 +158,13 @@ class PlayerActivity : ComponentActivity() {
   }
 
   override fun onCreate(estado: Bundle?) {
+    enableEdgeToEdge(
+      statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+      navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+    )
     super.onCreate(estado)
-    // Ninguem quer a tela apagando no meio do filme.
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    ativarTelaCheiaImersiva()
 
     val url = intent.getStringExtra(URL) ?: run { finish(); return }
     val referer = intent.getStringExtra(REFERER)
@@ -139,14 +180,34 @@ class PlayerActivity : ComponentActivity() {
       Palco(url, referer, titulo, cartaz, tipo, id, temporada, episodio, posicao) { finish() }
     }
   }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus) ativarTelaCheiaImersiva()
+  }
+
+  /**
+   * Inicia direto em tela cheia sem acionar o popup "Viewing full screen / Got it"
+   * do Android (que aparece quando BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE oculta
+   * todas as barras de uma vez).
+   */
+  private fun ativarTelaCheiaImersiva() {
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      window.attributes = window.attributes.apply {
+        layoutInDisplayCutoutMode =
+          WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+      }
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+      window.isNavigationBarContrastEnforced = false
+    }
+    val controller = WindowInsetsControllerCompat(window, window.decorView)
+    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+    controller.hide(WindowInsetsCompat.Type.statusBars())
+  }
 }
 
-/**
- * O palco: o video, a abertura da marca e os controles.
- *
- * A barra e os controles somem sozinhos depois de um tempo quieto, como no
- * site, e voltam a qualquer toque ou tecla do controle.
- */
 @OptIn(UnstableApi::class)
 @Composable
 private fun Palco(
@@ -162,6 +223,7 @@ private fun Palco(
   aoSair: () -> Unit
 ) {
   val ctx = LocalContext.current
+  val lifecycleOwner = LocalLifecycleOwner.current
 
   var urlAtual by remember { mutableStateOf(url) }
   var refererAtual by remember { mutableStateOf(referer) }
@@ -173,12 +235,10 @@ private fun Palco(
   var onde by remember { mutableStateOf(posicao) }
   var quanto by remember { mutableStateOf(0L) }
   var guardado by remember { mutableStateOf(0L) }
-  var mudo by remember { mutableStateOf(false) }
-  var volume by remember { mutableStateOf(1f) }
   var qualidade by remember { mutableStateOf("") }
+  var expandirTela by remember { mutableStateOf(false) }
+  var avisoPulo by remember { mutableStateOf<String?>(null) }
 
-  // Procurar o proximo episodio conversa com a origem e leva segundos.
-  // Sem este aviso, o botao pareceria morto no primeiro toque.
   var procurandoProximo by remember { mutableStateOf(false) }
   val escopo = rememberCoroutineScope()
   var carregando by remember { mutableStateOf(true) }
@@ -187,11 +247,6 @@ private fun Palco(
   var abertura by remember { mutableStateOf(true) }
   var ultimoToque by remember { mutableStateOf(System.currentTimeMillis()) }
 
-  /**
-   * ExoPlayer apoiado no mesmo OkHttpClient que valida as fontes, com
-   * AudioSink tolerante a pequenos saltos de timestamp (>200ms) comuns em
-   * segmentos HLS/MPEG-TS sem #EXT-X-DISCONTINUITY.
-   */
   val player = remember {
     val fabricaHttp = OkHttpDataSource.Factory(Http.cliente) {
       Http.cabecalhosVideo(refererRef.get())
@@ -233,11 +288,19 @@ private fun Palco(
     player.prepare()
   }
 
-  /*
-   * Conferencia antes de preparar o ExoPlayer: evita entregar HTML ou link
-   * expirado ao HlsPlaylistParser (ParserException: Input does not start with
-   * the #EXTM3U header) e renova a fonte automaticamente quando vencida.
-   */
+  // Pausa ao ir para segundo plano.
+  DisposableEffect(lifecycleOwner) {
+    val obs = LifecycleEventObserver { _, evento ->
+      if (evento == Lifecycle.Event.ON_PAUSE) {
+        player.pause()
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(obs)
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(obs)
+    }
+  }
+
   LaunchedEffect(tentativa) {
     carregando = true
     falha = null
@@ -291,10 +354,8 @@ private fun Palco(
         if (estado == Player.STATE_READY) abertura = false
       }
 
-      override fun onVideoSizeChanged(tamanho: androidx.media3.common.VideoSize) {
-        // A qualidade muda sozinha conforme a internet. Sem mostrar, a
-        // pessoa veria a imagem piorar sem entender por que.
-        qualidade = if (tamanho.height > 0) tamanho.height.toString() + "p" else ""
+      override fun onVideoSizeChanged(tamanho: VideoSize) {
+        qualidade = if (tamanho.height > 0) "${tamanho.height}p" else ""
       }
 
       override fun onPlayerError(erro: PlaybackException) {
@@ -335,21 +396,12 @@ private fun Palco(
     }
     player.addListener(ouvinte)
     onDispose {
-      // Antes de fechar, guarda onde parou.
       val p = player.currentPosition
       val d = player.duration
       if (d > 0) {
         val marca =
           Marca(tipo, id, titulo, cartaz, temporada, episodio, p, d, System.currentTimeMillis())
         Guardados.marcar(ctx, marca)
-
-        /*
-         * E tambem para a conta, para o site e os outros aparelhos saberem.
-         *
-         * Vai solto de proposito: a tela esta fechando, e segurar o fecho
-         * esperando a rede faria o player demorar a sumir. Se o pedido
-         * falhar, o que ficou guardado aqui sobe na proxima vez.
-         */
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
           try {
             Progresso.guardar(marca, terminou = marca.fracao >= 0.95f)
@@ -362,17 +414,15 @@ private fun Palco(
     }
   }
 
-  // O relogio do player: a posicao, a duracao e o quanto ja esta guardado.
   LaunchedEffect(Unit) {
     while (true) {
       onde = player.currentPosition
       quanto = if (player.duration > 0) player.duration else 0L
       guardado = player.bufferedPosition
-      delay(500)
+      delay(400)
     }
   }
 
-  // Fica quieto depois de uns segundos sem ninguem mexer.
   LaunchedEffect(ultimoToque, tocando) {
     quieto = false
     if (!tocando) return@LaunchedEffect
@@ -380,10 +430,16 @@ private fun Palco(
     quieto = true
   }
 
-  // A abertura sai sozinha, mesmo que o filme demore.
   LaunchedEffect(Unit) {
-    delay(2200)
+    delay(2000)
     abertura = false
+  }
+
+  LaunchedEffect(avisoPulo) {
+    if (avisoPulo != null) {
+      delay(900)
+      avisoPulo = null
+    }
   }
 
   fun acordar() {
@@ -399,9 +455,13 @@ private fun Palco(
     acordar()
     val alvo = (player.currentPosition + ms).coerceIn(0L, if (quanto > 0) quanto else Long.MAX_VALUE)
     player.seekTo(alvo)
+    onde = alvo
+    avisoPulo = if (ms > 0) "+${ms / 1000}s" else "${ms / 1000}s"
   }
 
-  Box(
+  val tituloExibido = if (tipo.ehSerie) "$titulo · T$temporada E$episodio" else titulo
+
+  BoxWithConstraints(
     Modifier
       .fillMaxSize()
       .background(Color.Black)
@@ -424,54 +484,107 @@ private fun Palco(
           else -> false
         }
       }
-      .clickable { if (quieto) acordar() else virarPlay() }
+      .clickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null
+      ) {
+        if (quieto) acordar() else quieto = true
+      }
   ) {
+    val compacto = maxHeight < 460.dp || maxWidth < 740.dp
 
+    // Video com PlayerView para respeitar proporcao e alternar ajuste/tela cheia.
     AndroidView(
       factory = { c ->
-        SurfaceView(c).also { player.setVideoSurfaceView(it) }
+        PlayerView(c).apply {
+          useController = false
+          setKeepContentOnPlayerReset(true)
+          setShutterBackgroundColor(android.graphics.Color.BLACK)
+          resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+          this.player = player
+        }
+      },
+      update = { view ->
+        view.resizeMode = if (expandirTela) {
+          AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        } else {
+          AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
       },
       modifier = Modifier.fillMaxSize()
     )
 
-    /*
-     * A abertura da marca, antes do filme.
-     *
-     * Fica por cima do palco e sai sozinha quando o filme comeca.
-     */
-    AnimatedVisibility(visible = abertura, label = "abertura") {
+    // Abertura curta da marca antes do video iniciar.
+    AnimatedVisibility(
+      visible = abertura,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      label = "abertura"
+    ) {
       Box(Modifier.fillMaxSize().background(Cor.bg), contentAlignment = Alignment.Center) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-          Text("M", color = Cor.accent, fontSize = 64.sp, fontWeight = FontWeight.Black)
-          Text("ovFlix", color = Cor.text, fontSize = 64.sp, fontWeight = FontWeight.Bold)
+          Text("M", color = Cor.accent, fontSize = if (compacto) 46.sp else 64.sp, fontWeight = FontWeight.Black)
+          Text("ovFlix", color = Cor.text, fontSize = if (compacto) 46.sp else 64.sp, fontWeight = FontWeight.Bold)
         }
       }
     }
 
-    // Enquanto o filme nao vem, a rodinha.
     if (carregando && !abertura && falha == null) {
-      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Rodinha(tamanho = 54) }
+      Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Rodinha(tamanho = 50)
+      }
+    }
+
+    // Feedback rapido ao avancar/voltar 10s no controle.
+    if (avisoPulo != null && !abertura && falha == null) {
+      Box(
+        Modifier
+          .align(Alignment.Center)
+          .clip(RoundedCornerShape(10.dp))
+          .background(Color(0xAA0B101B))
+          .padding(horizontal = 18.dp, vertical = 10.dp)
+      ) {
+        Text(
+          avisoPulo!!,
+          color = Color.White,
+          fontSize = 18.sp,
+          fontWeight = FontWeight.Bold
+        )
+      }
     }
 
     if (falha != null) {
-      Box(Modifier.fillMaxSize().background(Color(0xEE0F172A)), contentAlignment = Alignment.Center) {
+      Box(
+        Modifier.fillMaxSize().background(Color(0xEE0B1222)),
+        contentAlignment = Alignment.Center
+      ) {
         Column(
           Modifier.padding(32.dp),
           horizontalAlignment = Alignment.CenterHorizontally
         ) {
-          Text("O filme nao abriu", color = Cor.text, fontSize = 18.sp,
-            fontWeight = FontWeight.Bold)
+          Text(
+            "O filme não abriu",
+            color = Cor.text,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold
+          )
           Vao(8)
           Text(falha!!, color = Cor.muted, fontSize = 13.sp)
           Vao(18)
           Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.filmemeu.app.ui.Botao("Tentar novamente", jeito = com.filmemeu.app.ui.Jeito.PRIMARIO) {
+            com.filmemeu.app.ui.Botao(
+              "Tentar novamente",
+              jeito = com.filmemeu.app.ui.Jeito.PRIMARIO
+            ) {
               tentouRenovar = false
               falha = null
               carregando = true
               tentativa++
             }
-            com.filmemeu.app.ui.Botao("Voltar", jeito = com.filmemeu.app.ui.Jeito.FANTASMA) {
+            com.filmemeu.app.ui.Botao(
+              "Voltar",
+              jeito = com.filmemeu.app.ui.Jeito.FANTASMA
+            ) {
               aoSair()
             }
           }
@@ -479,236 +592,382 @@ private fun Palco(
       }
     }
 
-    /* ----- a barra de cima ----- */
+    // Botao discreto de voltar no canto superior esquerdo (some junto com os controles).
     AnimatedVisibility(
-      visible = !quieto && !abertura,
-      modifier = Modifier.align(Alignment.TopStart),
-      label = "barra"
+      visible = !quieto && !abertura && falha == null,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopStart)
+        .windowInsetsPadding(WindowInsets.safeDrawing)
+        .padding(horizontal = if (compacto) 12.dp else 18.dp, vertical = if (compacto) 10.dp else 14.dp),
+      label = "voltar_topo"
     ) {
-      Row(
-        Modifier
-          .fillMaxWidth()
-          .background(Color(0xCC0F172A))
-          .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        com.filmemeu.app.ui.Botao("Voltar", jeito = com.filmemeu.app.ui.Jeito.FANTASMA,
-          pequeno = true) { aoSair() }
-        VaoH(10)
-        Column(Modifier.weight(1f)) {
-          Text(titulo, color = Cor.text, fontSize = 15.sp, fontWeight = FontWeight.Bold,
-            maxLines = 1)
-          if (tipo.ehSerie) {
-            Text("T" + temporada + " E" + episodio, color = Cor.muted, fontSize = 12.sp)
-          }
-        }
-        /*
-         * Pular para o proximo episodio.
-         *
-         * So em serie, e so aqui em cima, junto do nome - e o lugar onde a
-         * pessoa ja olha para saber em que episodio esta.
-         *
-         * O proximo episodio e outro video: o endereco dele ainda nao
-         * existe, e precisa ser procurado como o primeiro foi. Por isso a
-         * tela abre de novo em vez de so trocar a fonte - assim o player
-         * nasce ja com a posicao guardada daquele episodio, se houver, e o
-         * Voltar leva de volta para a pagina do titulo, e nao para o
-         * episodio anterior.
-         */
-        if (tipo.ehSerie) {
-          com.filmemeu.app.ui.Botao(
-            if (procurandoProximo) "Procurando…" else "Próximo ▸",
-            pequeno = true
-          ) {
-            if (!procurandoProximo) {
-              procurandoProximo = true
-              escopo.launch {
-                val proximo = episodio + 1
-                val achada = try {
-                  Fontes.procurar(tipo, id, temporada, proximo)
-                } catch (e: Exception) {
-                  null
-                }
-                procurandoProximo = false
-                if (achada == null) {
-                  android.widget.Toast.makeText(
-                    ctx,
-                    "Nao achei o episodio " + proximo + ".",
-                    android.widget.Toast.LENGTH_SHORT
-                  ).show()
-                } else {
-                  Guardados.guardarFonte(ctx, achada)
-                  PlayerActivity.abrir(
-                    ctx = ctx,
-                    url = achada.url,
-                    referer = achada.referer,
-                    titulo = titulo,
-                    cartaz = cartaz,
-                    tipo = tipo,
-                    id = id,
-                    temporada = temporada,
-                    episodio = proximo,
-                    posicao = Guardados.posicaoDe(ctx, tipo, id, temporada, proximo)
-                  )
-                  aoSair()
-                }
-              }
-            }
-          }
-          VaoH(8)
-        }
-      }
+      BotaoVoltarPlayer { aoSair() }
     }
 
-    /* ----- os controles de baixo ----- */
+    /* ----- Overlay inferior identico ao player web ----- */
     AnimatedVisibility(
-      visible = !quieto && !abertura,
-      modifier = Modifier.align(Alignment.BottomStart),
-      label = "controles"
+      visible = !quieto && !abertura && falha == null,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier.align(Alignment.BottomCenter),
+      label = "controles_web"
     ) {
       Column(
         Modifier
           .fillMaxWidth()
-          .background(Color(0xCC0F172A))
-          .padding(horizontal = 14.dp, vertical = 12.dp)
-      ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          BotaoDoPlayer(if (tocando) "⏸" else "▶") { virarPlay() }
-          VaoH(10)
-          Text(
-            tempo(onde) + " / " + tempo(quanto),
-            color = Cor.text, fontSize = 13.sp
+          .background(
+            Brush.verticalGradient(
+              listOf(
+                Color.Transparent,
+                Color(0xB8050810),
+                Color(0xF2050810)
+              )
+            )
           )
+          .windowInsetsPadding(WindowInsets.safeDrawing)
+          .padding(
+            start = if (compacto) 14.dp else 20.dp,
+            end = if (compacto) 14.dp else 20.dp,
+            top = if (compacto) 24.dp else 36.dp,
+            bottom = if (compacto) 10.dp else 16.dp
+          )
+      ) {
+        // Linha do titulo logo acima da barra, exatamente como no player web.
+        Row(
+          Modifier
+            .fillMaxWidth()
+            .padding(bottom = if (compacto) 8.dp else 12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Text(
+            tituloExibido,
+            color = Color.White,
+            fontSize = if (compacto) 16.sp else 20.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+          )
+
+          if (tipo.ehSerie) {
+            Spacer(Modifier.width(12.dp))
+            BotaoProximoEpisodio(
+              carregando = procurandoProximo,
+              compacto = compacto
+            ) {
+              if (!procurandoProximo) {
+                acordar()
+                procurandoProximo = true
+                escopo.launch {
+                  val proximo = episodio + 1
+                  val achada = try {
+                    Fontes.procurar(tipo, id, temporada, proximo)
+                  } catch (_: Exception) {
+                    null
+                  }
+                  procurandoProximo = false
+                  if (achada == null) {
+                    android.widget.Toast.makeText(
+                      ctx,
+                      "Não achei o episódio $proximo.",
+                      android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                  } else {
+                    Guardados.guardarFonte(ctx, achada)
+                    PlayerActivity.abrir(
+                      ctx = ctx,
+                      url = achada.url,
+                      referer = achada.referer,
+                      titulo = titulo,
+                      cartaz = cartaz,
+                      tipo = tipo,
+                      id = id,
+                      temporada = temporada,
+                      episodio = proximo,
+                      posicao = Guardados.posicaoDe(ctx, tipo, id, temporada, proximo)
+                    )
+                    aoSair()
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Barra inferior minimalista: [▶/⏸]  00:01 / 1:40:15  720p  ●━━━━━━━━━━  [⛶]
+        Row(
+          Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xB80B101B))
+            .padding(
+              horizontal = if (compacto) 6.dp else 8.dp,
+              vertical = if (compacto) 5.dp else 7.dp
+            ),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(if (compacto) 10.dp else 14.dp)
+        ) {
+          BotaoQuadradoPlayer(
+            icone = if (tocando) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+            descricao = if (tocando) "Pausar" else "Reproduzir",
+            tag = "player_play_pause_button",
+            compacto = compacto
+          ) { virarPlay() }
+
+          Text(
+            "${tempoWeb(onde)} / ${tempoWeb(quanto)}",
+            color = Color(0xFFE2E8F0),
+            fontSize = if (compacto) 11.5.sp else 12.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1
+          )
+
           if (qualidade.isNotEmpty()) {
-            VaoH(10)
             Text(
               qualidade,
-              color = Cor.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-              modifier = Modifier
-                .background(Cor.line, RoundedCornerShape(999.dp))
-                .padding(horizontal = 8.dp, vertical = 3.dp)
+              color = Color(0xFF94A3B8),
+              fontSize = if (compacto) 10.5.sp else 11.5.sp,
+              fontWeight = FontWeight.Medium,
+              maxLines = 1
             )
           }
 
-          VaoH(12)
-          Trilho(
-            fracao = if (quanto > 0) onde.toFloat() / quanto else 0f,
-            guardada = if (quanto > 0) guardado.toFloat() / quanto else 0f,
-            modifier = Modifier.weight(1f)
-          ) { f ->
-            acordar()
-            if (quanto > 0) player.seekTo((quanto * f).toLong())
-          }
+          TrilhoWeb(
+            fracao = if (quanto > 0) (onde.toFloat() / quanto).coerceIn(0f, 1f) else 0f,
+            guardada = if (quanto > 0) (guardado.toFloat() / quanto).coerceIn(0f, 1f) else 0f,
+            modifier = Modifier.weight(1f),
+            aoArrastar = { f ->
+              acordar()
+              if (quanto > 0) {
+                val alvo = (quanto * f).toLong()
+                onde = alvo
+                player.seekTo(alvo)
+              }
+            },
+            aoPularTecla = { deltaMs -> correr(deltaMs) }
+          )
 
-          VaoH(12)
-          BotaoDoPlayer(if (mudo) "✕" else "♪") {
+          BotaoQuadradoPlayer(
+            icone = if (expandirTela) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+            descricao = if (expandirTela) "Ajustar vídeo" else "Preencher tela",
+            tag = "player_fullscreen_toggle_button",
+            compacto = compacto
+          ) {
             acordar()
-            mudo = !mudo
-            player.volume = if (mudo) 0f else volume
-          }
-          VaoH(8)
-          Trilho(
-            fracao = if (mudo) 0f else volume,
-            guardada = 0f,
-            modifier = Modifier.width(90.dp)
-          ) { f ->
-            acordar()
-            volume = f.coerceIn(0f, 1f)
-            mudo = volume == 0f
-            player.volume = volume
+            expandirTela = !expandirTela
           }
         }
-      }
-    }
-
-    /* ----- o nome do que esta tocando ----- */
-    if (!quieto && !abertura && tipo.ehSerie) {
-      Column(Modifier.align(Alignment.TopEnd).padding(top = 70.dp, end = 18.dp)) {
-        Text(titulo, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text(
-          "Temporada " + temporada + ", episodio " + episodio,
-          color = Color(0xFFD7DEE8), fontSize = 13.sp
-        )
       }
     }
   }
 }
 
-/** O botao redondo dos controles, igual ao `.np-bt` do site. */
 @Composable
-private fun BotaoDoPlayer(texto: String, aoTocar: () -> Unit) {
+private fun BotaoVoltarPlayer(aoTocar: () -> Unit) {
   val fonte = remember { MutableInteractionSource() }
   val focado by fonte.collectIsFocusedAsState()
+  val forma = RoundedCornerShape(8.dp)
+  Row(
+    Modifier
+      .testTag("player_back_button")
+      .clip(forma)
+      .background(if (focado) Color(0xCC1E293B) else Color(0x990D1320))
+      .border(1.dp, if (focado) Cor.accent else Color(0x28FFFFFF), forma)
+      .focusable(interactionSource = fonte)
+      .clickable(interactionSource = fonte, indication = null) { aoTocar() }
+      .padding(horizontal = 12.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(6.dp)
+  ) {
+    Icon(
+      imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+      contentDescription = "Voltar",
+      tint = Color.White,
+      modifier = Modifier.size(16.dp)
+    )
+    Text(
+      "Voltar",
+      color = Color.White,
+      fontSize = 13.sp,
+      fontWeight = FontWeight.Medium
+    )
+  }
+}
+
+@Composable
+private fun BotaoProximoEpisodio(
+  carregando: Boolean,
+  compacto: Boolean,
+  aoTocar: () -> Unit
+) {
+  val fonte = remember { MutableInteractionSource() }
+  val focado by fonte.collectIsFocusedAsState()
+  val forma = RoundedCornerShape(8.dp)
   Box(
     Modifier
-      .size(40.dp)
-      .background(
-        if (focado) Color(0x33FFFFFF) else Color(0x1AFFFFFF),
-        RoundedCornerShape(50)
+      .testTag("player_next_episode_button")
+      .clip(forma)
+      .background(if (focado) Cor.accentStrong else Color(0xCC141B2B))
+      .border(1.dp, if (focado) Color.White else Color(0x33FFFFFF), forma)
+      .focusable(interactionSource = fonte)
+      .clickable(interactionSource = fonte, indication = null) { aoTocar() }
+      .padding(horizontal = if (compacto) 10.dp else 14.dp, vertical = if (compacto) 6.dp else 8.dp)
+  ) {
+    Text(
+      if (carregando) "Procurando…" else "Próximo ▸",
+      color = if (focado) Cor.sobreAccent else Color.White,
+      fontSize = if (compacto) 12.sp else 13.sp,
+      fontWeight = FontWeight.SemiBold
+    )
+  }
+}
+
+/** Botao quadrado arredondado do player web (play/pause e tela cheia). */
+@Composable
+private fun BotaoQuadradoPlayer(
+  icone: ImageVector,
+  descricao: String,
+  tag: String,
+  compacto: Boolean,
+  aoTocar: () -> Unit
+) {
+  val fonte = remember { MutableInteractionSource() }
+  val focado by fonte.collectIsFocusedAsState()
+  val forma = RoundedCornerShape(8.dp)
+  val tam = if (compacto) 36.dp else 40.dp
+
+  Box(
+    Modifier
+      .testTag(tag)
+      .size(tam)
+      .clip(forma)
+      .background(if (focado) Color(0xFF1F2D45) else Color(0xCC151B28))
+      .border(
+        width = if (focado) 1.5.dp else 1.dp,
+        color = if (focado) Cor.accent else Color(0x26FFFFFF),
+        shape = forma
       )
       .focusable(interactionSource = fonte)
       .clickable(interactionSource = fonte, indication = null) { aoTocar() },
     contentAlignment = Alignment.Center
   ) {
-    Text(texto, color = Color.White, fontSize = 16.sp)
+    Icon(
+      imageVector = icone,
+      contentDescription = descricao,
+      tint = Color.White,
+      modifier = Modifier.size(if (compacto) 19.dp else 22.dp)
+    )
   }
 }
 
 /**
- * O trilho.
- *
- * Tres camadas, como no site: o que ja esta guardado adiante, o que ja foi
- * visto e a bolinha. A camada do guardado diz de relance se o filme tem
- * folego para seguir ou se esta andando no limite da conexao.
+ * Trilho horizontal igual ao do player web:
+ * linha discreta cinza, camada de buffer, progresso branco e bolinha branca
+ * na ponta. Suporta toque direto, arrastar com o dedo e setas do controle.
  */
 @Composable
-private fun Trilho(
+private fun TrilhoWeb(
   fracao: Float,
   guardada: Float,
   modifier: Modifier = Modifier,
-  aoEscolher: (Float) -> Unit
+  aoArrastar: (Float) -> Unit,
+  aoPularTecla: (Long) -> Unit
 ) {
   val fonte = remember { MutableInteractionSource() }
   val focado by fonte.collectIsFocusedAsState()
+  var larguraPx by remember { mutableStateOf(1) }
+  val f = fracao.coerceIn(0f, 1f)
+  val g = guardada.coerceIn(0f, 1f)
 
-  /*
-   * O trilho tambem recebe o foco.
-   *
-   * Numa TV nao ha onde arrastar: quem anda no filme e a seta do controle,
-   * e ela so chega aqui se este pedaco for focavel de verdade. O toque na
-   * tela continua valendo para quem esta no celular.
-   */
   Box(
     modifier
-      .height(if (focado) 10.dp else 6.dp)
-      .background(Color(0x33FFFFFF), RoundedCornerShape(50))
+      .height(30.dp)
+      .onSizeChanged { if (it.width > 0) larguraPx = it.width }
       .focusable(interactionSource = fonte)
-      .clickable(interactionSource = fonte, indication = null) { aoEscolher(fracao) }
+      .onKeyEvent { evento ->
+        if (evento.type != KeyEventType.KeyDown) return@onKeyEvent false
+        when (evento.key) {
+          Key.DirectionLeft -> {
+            aoPularTecla(-10_000); true
+          }
+          Key.DirectionRight -> {
+            aoPularTecla(10_000); true
+          }
+          else -> false
+        }
+      }
+      .pointerInput(Unit) {
+        detectTapGestures { offset ->
+          val alvo = (offset.x / larguraPx.toFloat()).coerceIn(0f, 1f)
+          aoArrastar(alvo)
+        }
+      }
+      .pointerInput(Unit) {
+        detectHorizontalDragGestures { change, _ ->
+          change.consume()
+          val alvo = (change.position.x / larguraPx.toFloat()).coerceIn(0f, 1f)
+          aoArrastar(alvo)
+        }
+      },
+    contentAlignment = Alignment.CenterStart
   ) {
+    val alturaLinha = if (focado) 6.dp else 4.dp
+    // Fundo da barra
     Box(
       Modifier
-        .fillMaxWidth(guardada.coerceIn(0f, 1f))
-        .height(if (focado) 10.dp else 6.dp)
-        .background(Color(0x55FFFFFF), RoundedCornerShape(50))
+        .fillMaxWidth()
+        .height(alturaLinha)
+        .clip(RoundedCornerShape(50))
+        .background(Color(0x3DFFFFFF))
     )
+    // Buffer
     Box(
       Modifier
-        .fillMaxWidth(fracao.coerceIn(0f, 1f))
-        .height(if (focado) 10.dp else 6.dp)
-        .background(Cor.accent, RoundedCornerShape(50))
+        .fillMaxWidth(g)
+        .height(alturaLinha)
+        .clip(RoundedCornerShape(50))
+        .background(Color(0x66FFFFFF))
+    )
+    // Progresso assistido
+    Box(
+      Modifier
+        .fillMaxWidth(f)
+        .height(alturaLinha)
+        .clip(RoundedCornerShape(50))
+        .background(if (focado) Cor.accent else Color(0xFFE2E8F0))
+    )
+    // Bolinha branca igual a imagem do player web
+    val tamBolinha = if (focado) 14.dp else 11.dp
+    Box(
+      Modifier
+        .offset {
+          val x = (larguraPx * f).roundToInt() - (tamBolinha.roundToPx() / 2)
+          IntOffset(x.coerceIn(0, (larguraPx - tamBolinha.roundToPx()).coerceAtLeast(0)), 0)
+        }
+        .size(tamBolinha)
+        .clip(CircleShape)
+        .background(Color.White)
+        .border(
+          width = if (focado) 2.dp else 0.dp,
+          color = if (focado) Cor.accent else Color.Transparent,
+          shape = CircleShape
+        )
     )
   }
 }
 
-/** 01:23:45, ou 23:45 quando nao passa de uma hora. */
-private fun tempo(ms: Long): String {
+/** Formato igual ao web: 00:01 quando < 1h, e 1:40:15 quando passa de 1 hora. */
+private fun tempoWeb(ms: Long): String {
   if (ms <= 0) return "00:00"
   val s = ms / 1000
   val h = s / 3600
   val m = (s % 3600) / 60
   val seg = s % 60
   return if (h > 0) {
-    String.format("%02d:%02d:%02d", h, m, seg)
+    String.format("%d:%02d:%02d", h, m, seg)
   } else {
     String.format("%02d:%02d", m, seg)
   }
